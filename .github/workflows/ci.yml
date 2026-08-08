@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+
+  self-audit:
+    # texclaims gates its own example the way it would gate a submission.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - working-directory: examples/demo
+        run: |
+          texclaims check --ledger claims.yaml
+          texclaims scan --ledger claims.yaml --strict
+          texclaims generate --ledger claims.yaml --check
+
+  package:
+    # The sdist promises a runnable suite; nothing checked that until now.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build
+      - run: python -m build
+      - name: the shipped sdist must carry a suite that runs
+        run: |
+          mkdir -p /tmp/sdist && tar xzf dist/*.tar.gz -C /tmp/sdist --strip-components=1
+          cd /tmp/sdist && pip install -e ".[dev]" && pytest -q
+      - name: the wheel must install and run
+        run: |
+          pip install --force-reinstall dist/*.whl
+          texclaims --version

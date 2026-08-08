@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use texclaims in published work, please cite it."
+title: "texclaims: deterministic auditing of manuscript numbers against experiment artifacts"
+abstract: >-
+  A command-line tool that reconciles the numbers written in a LaTeX or
+  Markdown manuscript against the fields of the experiment artifacts that
+  produced them, through a declarative YAML ledger. It verifies claimed
+  numbers at display precision, audits the negative space for numbers no
+  claim accounts for, and emits provenance-annotated LaTeX macros so new
+  prose need not transcribe results by hand.
+type: software
+authors:
+  - family-names: "You"
+    given-names: "Jiahao"
+    alias: YYYJH1
+repository-code: "https://github.com/YYYJH1/texclaims"
+license: MIT
+version: 0.1.0
+date-released: 2026-08-08
+keywords:
+  - reproducibility
+  - latex
+  - scientific-writing
+  - continuous-integration
+  - provenance

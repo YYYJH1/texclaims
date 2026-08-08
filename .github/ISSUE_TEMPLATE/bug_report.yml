@@ -1,0 +1,26 @@
+name: Bug report
+description: Something texclaims got wrong
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `texclaims --version`
+    validations:
+      required: true
+  - type: textarea
+    id: ledger
+    attributes:
+      label: The relevant part of your ledger
+      description: The claim or exemption involved, and the artifact field it points at.
+      render: yaml
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Command and full output
+      description: The command you ran and everything it printed, including the exit code.
+      render: shell
+    validations:
+      required: true
