@@ -1,0 +1,6 @@
+{
+  "improvement": { "throughput_pct": 12.73421 },
+  "baseline": { "mean_ms": 4.8659, "std_ms": 0.5121 },
+  "fastcache": { "mean_ms": 3.2114, "std_ms": 0.4432 },
+  "n_seeds": 5
+}

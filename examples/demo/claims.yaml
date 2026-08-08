@@ -1,0 +1,67 @@
+# texclaims ledger for the demo paper.
+#
+# Try it:
+#   texclaims check  --ledger claims.yaml     # every number reconciles -> exit 0
+#   texclaims scan   --ledger claims.yaml --strict
+#   texclaims generate --ledger claims.yaml --out numbers.tex
+#
+# Now edit 12.7 in paper.tex to 13.7 and run check again: it fails.
+
+version: 1
+
+documents:
+  - paper.tex
+
+sources:
+  summary: results/summary.json
+  runs: results/runs.csv
+
+defaults:
+  file: paper.tex
+
+patterns:
+  latency_sentence: 'from \$([\d.]+) \\pm ([\d.]+)\$\\,ms to \$([\d.]+) \\pm ([\d.]+)\$\\,ms'
+
+claims:
+  - name: headline-improvement
+    anchor: { template: 'throughput by {num}\%' }
+    expect: 2            # intro + evaluation copies must both exist and both agree
+    value: 'summary:.improvement.throughput_pct'
+
+  - name: latency-row
+    anchor: { pattern: latency_sentence }
+    expect: 1
+    groups:
+      1: 'summary:.baseline.mean_ms'
+      2: 'summary:.baseline.std_ms'
+      3: 'summary:.fastcache.mean_ms'
+      4: 'summary:.fastcache.std_ms'
+
+  - name: hit-rate
+    anchor: { template: 'hit rate of {num}\%' }
+    expect: 1
+    value: 'runs:[] | .hit_rate | mean'
+    transform: { scale: 100 }
+
+  - name: seed-count
+    anchor: { template: 'across {num} seeds' }
+    expect: 2
+    value: 'summary:.n_seeds'
+
+exemptions:
+  - name: confidence-level
+    file: paper.tex
+    anchor: { template: 'the {num}\% confidence level' }
+    expect: 1
+    reason: "Statistical protocol constant chosen a priori, not an experimental result."
+
+scan:
+  regions:
+    - file: paper.tex
+      start: '\section{Evaluation}'
+
+emit:
+  output: numbers.tex
+  macros:
+    - { name: HeadlineImprovement, value: 'summary:.improvement.throughput_pct', format: '.1f' }
+    - { name: MeanHitRate, value: 'runs:[] | .hit_rate | mean', scale: 100, format: '.1f' }

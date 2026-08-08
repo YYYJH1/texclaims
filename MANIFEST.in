@@ -1,0 +1,7 @@
+# The sdist carries a runnable test suite: the tests need their fixtures and
+# the demo project, and a half-shipped suite fails for downstream packagers.
+include LICENSE README.md README.zh-CN.md CITATION.cff
+recursive-include tests *.py
+recursive-include examples *
+recursive-include skills *.md
+prune assets
