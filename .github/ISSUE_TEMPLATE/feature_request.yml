@@ -1,0 +1,27 @@
+name: Feature request
+description: Something texclaims should catch and does not
+body:
+  - type: textarea
+    id: passes
+    attributes:
+      label: What gets through the gate today
+      description: >-
+        The manuscript text and the artifact field, and the verdict texclaims
+        currently returns for them.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What it should have returned
+      description: Which of PASS, FAIL, MISS or UNMAPPED, and on what grounds.
+    validations:
+      required: true
+  - type: textarea
+    id: ledger
+    attributes:
+      label: How you would want to declare it
+      description: A sketch of the ledger entry, if the request needs new schema.
+      render: yaml
+    validations:
+      required: false

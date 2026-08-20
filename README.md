@@ -7,13 +7,13 @@ against the experiment artifacts that produced them.**
 
 [![CI](https://github.com/YYYJH1/texclaims/actions/workflows/ci.yml/badge.svg)](https://github.com/YYYJH1/texclaims/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](https://github.com/YYYJH1/texclaims/blob/main/LICENSE)
 
-English · [简体中文](README.zh-CN.md)
+English · [简体中文](https://github.com/YYYJH1/texclaims/blob/main/README.zh-CN.md)
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/hero-dark.png">
-  <img alt="Each highlighted number in a manuscript is tethered to a field in an experiment artifact; one tether is broken and red." src="assets/hero.png">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/YYYJH1/texclaims/main/assets/hero-dark.png">
+  <img alt="Each highlighted number in a manuscript is tethered to a field in an experiment artifact; one tether is broken and red." src="https://raw.githubusercontent.com/YYYJH1/texclaims/main/assets/hero.png">
 </picture>
 
 </div>
@@ -26,7 +26,7 @@ English · [简体中文](README.zh-CN.md)
 **Contents** · [Quickstart](#quickstart) · [How it works](#how-it-works) ·
 [Adopting it](#adopting-it-on-a-paper-you-already-wrote) · [The three commands](#the-three-commands) ·
 [Tolerance](#tolerance) · [Fail-closed](#fail-closed-by-design) · [CI](#continuous-integration) ·
-[Agents](#a-deterministic-gate-for-an-agent-written-manuscript) · [Comparison](#how-it-compares) · [Reference](docs/ledger.md)
+[Agents](#a-deterministic-gate-for-an-agent-written-manuscript) · [Comparison](#how-it-compares) · [Reference](https://github.com/YYYJH1/texclaims/blob/main/docs/ledger.md)
 
 ---
 
@@ -66,7 +66,7 @@ claims:
     value: 'summary:.improvement.throughput_pct'   # -> 12.73421
 ```
 
-Everything above is [`examples/demo`](examples/demo). The alternatives all ask
+Everything above is [`examples/demo`](https://github.com/YYYJH1/texclaims/tree/main/examples/demo). The alternatives all ask
 for something you may not want to give:
 
 | Existing answer | What it asks of you |
@@ -99,7 +99,7 @@ Python 3.10+, one runtime dependency (PyYAML). Start your own ledger with
 
 ## How it works
 
-![Sources on the left feed a ledger of bindings in the middle, which drives three commands and their exit codes.](assets/flow-pipeline.png)
+![Sources on the left feed a ledger of bindings in the middle, which drives three commands and their exit codes.](https://raw.githubusercontent.com/YYYJH1/texclaims/main/assets/flow-pipeline.png)
 
 Your manuscript and your result files meet in one place: a YAML ledger that
 binds each reported number to the exact artifact field it came from. Three
@@ -119,7 +119,7 @@ wrong, **2** the ledger is wrong. CI can tell those apart.
 
 ## Adopting it on a paper you already wrote
 
-![A document with unaccounted numbers, a magnifier over the worklist, entries being added, and a passing gate, with an arrow looping back.](assets/flow-loop.png)
+![A document with unaccounted numbers, a magnifier over the worklist, entries being added, and a passing gate, with an arrow looping back.](https://raw.githubusercontent.com/YYYJH1/texclaims/main/assets/flow-loop.png)
 
 You do not write the ledger up front. You let the scan tell you what is
 missing, and work the list down in batches:
@@ -161,7 +161,7 @@ $ texclaims check --json | jq '.summary'
 { "FAIL": 0, "MISS": 0, "PASS": 9, "UNMAPPED": 0, "verdict": "OK" }
 ```
 
-[`skills/texclaims/SKILL.md`](skills/texclaims/SKILL.md) is a ready-made agent
+[`skills/texclaims/SKILL.md`](https://github.com/YYYJH1/texclaims/blob/main/skills/texclaims/SKILL.md) is a ready-made agent
 skill — copy it into `.claude/skills/` and the agent knows how to bootstrap a
 ledger, read the four statuses, and re-anchor a claim after an edit.
 
@@ -179,7 +179,7 @@ is declared once with `expect: 2`, interlocking the copies.
 
 ### scan
 
-![Most numbers on a page are tethered to a source; three are circled because nothing accounts for them.](assets/scan.png)
+![Most numbers on a page are tethered to a source; three are circled because nothing accounts for them.](https://raw.githubusercontent.com/YYYJH1/texclaims/main/assets/scan.png)
 
 `check` only vouches for numbers you remembered to write down. The scan
 inverts the question — in each declared region, every number must be claimed,
@@ -300,7 +300,7 @@ solve the problem more thoroughly — if you will author in their format, use
 them. This is for the manuscript that already exists.
 
 The survey behind this table — 40+ tools across five categories, with
-maintenance status and citations — is in [`docs/prior-art.md`](docs/prior-art.md).
+maintenance status and citations — is in [`docs/prior-art.md`](https://github.com/YYYJH1/texclaims/blob/main/docs/prior-art.md).
 
 Prior art: [`jtoman/claims`](https://github.com/jtoman/claims) (2016) paired
 LaTeX claim markers with a YAML verifier — the earliest version of this shape I
@@ -319,7 +319,7 @@ A claim binds one number in one document to one artifact field:
   value: 'summary:.improvement.throughput_pct'
 ```
 
-[`docs/ledger.md`](docs/ledger.md) has the rest: the three anchor kinds, the
+[`docs/ledger.md`](https://github.com/YYYJH1/texclaims/blob/main/docs/ledger.md) has the rest: the three anchor kinds, the
 selector grammar, transforms and tolerances, and every field of the schema.
 
 ## Limitations
@@ -358,7 +358,7 @@ the output quoted above against what the tool actually prints.
 
 <div align="center">
 
-[Demo](examples/demo) · [Agent skill](skills/texclaims/SKILL.md) ·
-[Cite](CITATION.cff) · [MIT License](LICENSE)
+[Demo](https://github.com/YYYJH1/texclaims/tree/main/examples/demo) · [Agent skill](https://github.com/YYYJH1/texclaims/blob/main/skills/texclaims/SKILL.md) ·
+[Cite](https://github.com/YYYJH1/texclaims/blob/main/CITATION.cff) · [MIT License](https://github.com/YYYJH1/texclaims/blob/main/LICENSE)
 
 </div>

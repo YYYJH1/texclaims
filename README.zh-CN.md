@@ -4,17 +4,17 @@
 
 **把论文里手写的每个结果数字，对账回产生它的实验数据文件。**
 
-[English](README.md) · 简体中文
+[English](https://github.com/YYYJH1/texclaims/blob/main/README.md) · 简体中文
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/hero-dark.png">
-  <img alt="论文里每个高亮的数字都有一根线连到实验产物中的某个字段，其中一根是断开的红线。" src="assets/hero.png">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/YYYJH1/texclaims/main/assets/hero-dark.png">
+  <img alt="论文里每个高亮的数字都有一根线连到实验产物中的某个字段，其中一根是断开的红线。" src="https://raw.githubusercontent.com/YYYJH1/texclaims/main/assets/hero.png">
 </picture>
 
 </div>
 
 > 本文是面向中文读者的简介。完整的参考手册、账本 schema 与全部示例以
-> [英文版](README.md) 为准——那一份由测试守护，不会与实际行为脱节。
+> [英文版](https://github.com/YYYJH1/texclaims/blob/main/README.md) 为准——那一份由测试守护，不会与实际行为脱节。
 
 ## 它解决什么问题
 
@@ -68,7 +68,7 @@ Python 3.10+，运行时只依赖 PyYAML。用 `texclaims init --doc main.tex` �
 
 ## 三个命令
 
-![左边的来源汇入中间的账本，账本驱动三个命令及其退出码。](assets/flow-pipeline.png)
+![左边的来源汇入中间的账本，账本驱动三个命令及其退出码。](https://raw.githubusercontent.com/YYYJH1/texclaims/main/assets/flow-pipeline.png)
 
 | 命令 | 它确立的事实 |
 |---|---|
@@ -84,7 +84,7 @@ CI 能区分这两种失败。
 
 ## 在已经写好的论文上采用
 
-![一份有未认领数字的文档、放大镜扫视工作清单、逐条添加条目、通过的闸门，最后一根箭头回流。](assets/flow-loop.png)
+![一份有未认领数字的文档、放大镜扫视工作清单、逐条添加条目、通过的闸门，最后一根箭头回流。](https://raw.githubusercontent.com/YYYJH1/texclaims/main/assets/flow-loop.png)
 
 账本不是一次写完的，而是让扫描告诉你还差什么，分批清掉：
 
@@ -109,11 +109,11 @@ CI 能区分这两种失败。
 
 ## 配合 agent 使用
 
-[`skills/texclaims/SKILL.md`](skills/texclaims/SKILL.md) 是一份现成的 agent 技能，
+[`skills/texclaims/SKILL.md`](https://github.com/YYYJH1/texclaims/blob/main/skills/texclaims/SKILL.md) 是一份现成的 agent 技能，
 拷进 `.claude/skills/` 即可。分工是：agent 提议账本条目，`texclaims` 裁决。
 agent 擅长读句子、不擅长当闸门——这样判断才保持确定性和可重跑。
 
 ## 更多
 
 完整的账本 schema、三种锚定方式、选择器语法、fail-closed 规则表与已知限制，
-见 [英文 README](README.md)。
+见 [英文 README](https://github.com/YYYJH1/texclaims/blob/main/README.md)。

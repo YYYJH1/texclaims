@@ -37,6 +37,7 @@ texclaims = "texclaims.cli:main"
 Homepage = "https://github.com/YYYJH1/texclaims"
 Repository = "https://github.com/YYYJH1/texclaims"
 Issues = "https://github.com/YYYJH1/texclaims/issues"
+Changelog = "https://github.com/YYYJH1/texclaims/blob/main/CHANGELOG.md"
 
 [tool.setuptools.dynamic]
 version = { attr = "texclaims.__version__" }

@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Ledger schema reference
+    url: https://github.com/YYYJH1/texclaims/blob/main/docs/ledger.md
+    about: Anchor kinds, selector grammar, transforms and tolerances — check here before filing.
+  - name: Known limitations
+    url: https://github.com/YYYJH1/texclaims#limitations
+    about: Inequalities, figures, \input following and a few others are out of scope by design.
