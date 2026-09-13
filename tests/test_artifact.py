@@ -137,8 +137,9 @@ def test_csv_suffix_match_is_case_insensitive(load):
     assert load("results/RUNS.CSV", "a,b\n1,x\n") == [{"a": 1, "b": "x"}]
 
 
-def test_csv_cells_beyond_the_header_are_dropped(load):
-    assert load("results/wide.csv", "a,b\n1,2,3\n") == [{"a": 1, "b": 2}]
+def test_csv_cells_beyond_the_header_are_rejected(load):
+    with pytest.raises(LedgerError, match="CSV row 2 has 1 extra field"):
+        load("results/wide.csv", "a,b\n1,2,3\n")
 
 
 def test_csv_rows_feed_the_wildcard_pipeline(runs):
@@ -269,10 +270,11 @@ def test_missing_key_reports_consumed_path_and_candidates(summary):
     assert "'throughput_pct'" in message
 
 
-def test_index_out_of_range_reports_length_and_consumed_path(summary):
+@pytest.mark.parametrize("index", [4, 9])
+def test_index_out_of_range_reports_length_and_consumed_path(summary, index):
     with pytest.raises(LedgerError) as exc:
-        select(summary, ".xs[9]")
-    assert "index [9] out of range (len 4) after '.xs'" in str(exc.value)
+        select(summary, f".xs[{index}]")
+    assert f"index [{index}] out of range (len 4) after '.xs'" in str(exc.value)
 
 
 def test_descending_into_a_scalar_reports_the_consumed_path(summary):

@@ -39,6 +39,7 @@ arises — and cannot be asked of a manuscript already written.
 | [CODECHECK](https://codecheck.org.uk/) | Active, publisher partnerships | A human re-runs the code and certifies it. Whole-workflow granularity, not per-number. |
 | The Black Spatula Project, YesNoError | Active 2024–2026 | LLM sweeps over manuscripts. Probabilistic; useful as reviewers, not as gates. |
 | [PaperRepro](https://arxiv.org/abs/2603.00058) | 2026 paper, code released | LLM agents re-execute an artifact and compare findings. Grounded, but agent-driven and aimed at third-party review. |
+| [SciCoQA](https://arxiv.org/abs/2601.12910v3) | 2026 benchmark, ACL | 635 paper–code discrepancies (92 real, 543 synthetic); the best evaluated models detect 46.7% of real-world discrepancies. A benchmark for paper–code alignment, not an artifact-field reconciliation tool. |
 
 ## 3. The same shape, tried before
 

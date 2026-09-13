@@ -267,6 +267,33 @@ def test_group_captures_produce_one_record_per_group(project):
     assert state.report.exit_code() == 0
 
 
+def test_repeated_groups_bind_the_same_fields_rather_than_indexing_rows(project):
+    rows = [("Alpha", 4.87, 3.21), ("Beta", 6.5, 5.1), ("Gamma", 8.4, 7.3)]
+    paper = "\n".join(f"{name} & {old} & {new}" for name, old, new in rows)
+    artifact = {name: {"old": old, "new": new} for name, old, new in rows}
+    claim = {"name": "all-rows", "file": "paper.tex", "expect": 3,
+             "anchor": {"template": "& {num} & {num}"},
+             "groups": {1: "summary:.Alpha.old", 2: "summary:.Alpha.new"}}
+    path = project(documents={"paper.tex": paper},
+                   artifacts={"results/summary.json": artifact},
+                   ledger={"sources": {"summary": "results/summary.json"}, "claims": [claim]})
+    state = run(path)
+    assert statuses(state) == [PASS, PASS, FAIL, FAIL, FAIL, FAIL]
+    assert state.report.exit_code() == 1
+    # Each row needs its own label and artifact fields. Repeating an anchor
+    # never turns expect into an index into the source artifact.
+    claims = [{"name": name, "file": "paper.tex", "expect": 1,
+               "anchor": {"template": name + " & {num} & {num}"},
+               "groups": {1: f"summary:.{name}.old", 2: f"summary:.{name}.new"}}
+              for name, _, _ in rows]
+    path = project(documents={"paper.tex": paper},
+                   artifacts={"results/summary.json": artifact},
+                   ledger={"sources": {"summary": "results/summary.json"}, "claims": claims})
+    state = run(path)
+    assert statuses(state) == [PASS] * 6
+    assert state.report.exit_code() == 0
+
+
 def test_group_records_are_independent(project):
     path = project(
         documents={"paper.tex": "Latency drops from $4.87$\\,ms to $9.99$\\,ms.\n"},

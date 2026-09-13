@@ -46,7 +46,7 @@ The abstract still says 12.7. Nothing else in a LaTeX toolchain will tell you:
 $ texclaims check
 PASS     headline-improvement paper.tex:6 claimed=12.7 expected=12.73421 tol=0.05
 FAIL     headline-improvement paper.tex:10 claimed=13.7 expected=12.73421 tol=0.05 :: |claimed - expected| = 0.96579 exceeds display-precision tolerance
-== 8 PASS, 1 FAIL, 0 MISS, 0 UNMAPPED — FAIL ==
+== 8 PASS, 1 FAIL, 0 MISS, 0 UNMAPPED, 1 WAIVED — FAIL ==
 $ echo $?
 1
 ```
@@ -72,7 +72,7 @@ for something you may not want to give:
 | Existing answer | What it asks of you |
 |---|---|
 | Literate programming (knitr, Quarto, showyourwork) | Rewrite the paper in its format, adopt its build system |
-| LLM auditors | Trust a probabilistic reviewer as a gate — SciCoQA puts the best models under half on the neighbouring paper-vs-code task |
+| LLM auditors | Trust a probabilistic reviewer as a gate — [SciCoQA](https://github.com/YYYJH1/texclaims/blob/main/docs/prior-art.md#2-post-hoc-checking--read-the-paper-judge-the-numbers) puts the best evaluated models under half on real-world discrepancies in the neighbouring paper-vs-code task |
 | Artifact evaluation (ACM/IEEE, CODECHECK) | Only that the code runs; guidelines tolerate numeric drift |
 
 ## Quickstart
@@ -91,7 +91,7 @@ PASS     latency-row#g4 paper.tex:11 claimed=0.44 expected=0.4432 tol=0.005
 PASS     hit-rate paper.tex:12 claimed=94.2 expected=94.218 tol=0.05
 PASS     seed-count paper.tex:6 claimed=5 expected=5 tol=0.5
 PASS     seed-count paper.tex:12 claimed=5 expected=5 tol=0.5
-== 9 PASS, 0 FAIL, 0 MISS, 0 UNMAPPED — OK ==
+== 9 PASS, 0 FAIL, 0 MISS, 0 UNMAPPED, 1 WAIVED — OK ==
 ```
 
 Python 3.10+, one runtime dependency (PyYAML). Start your own ledger with
@@ -117,6 +117,19 @@ to map one. Either alone leaves a gap; together they close the loop.
 Exit codes are the interface: **0** clean, **1** a number or the prose is
 wrong, **2** the ledger is wrong. CI can tell those apart.
 
+Records use `PASS`, `FAIL`, `MISS`, or `UNMAPPED` and go to stdout; warnings
+and the summary go to stderr. The summary's `WAIVED` counter counts number
+occurrences covered by exemptions. It adds no per-number records and does not
+affect the exit code. For completed audits, JSON includes the same total under
+`summary.WAIVED` and counts by exemption name under `waived`, so a broad waiver
+is visible.
+
+With `--json`, `summary.verdict` is `OK` for exit 0 and `FAIL` for exit 1.
+Ledger or artifact errors return `CONFIG_ERROR` with exit 2, empty `records`
+and `warnings`, and an `error.message` diagnostic; the human-readable error
+still goes to stderr. That error object has no audit counts because no audit
+completed.
+
 ## Adopting it on a paper you already wrote
 
 ![A document with unaccounted numbers, a magnifier over the worklist, entries being added, and a passing gate, with an arrow looping back.](https://raw.githubusercontent.com/YYYJH1/texclaims/main/assets/flow-loop.png)
@@ -131,7 +144,8 @@ missing, and work the list down in batches:
 4. When `scan --strict` exits 0, add it to CI.
 
 A paper split across files needs each one listed, with its own region —
-claims are file-local, and `texclaims` does not follow `\input`:
+claims are file-local, and `texclaims` does not follow includes such as
+`\input`, `\include`, `\subfile`, or `\import`:
 
 ```yaml
 documents: [main.tex, sections/results.tex, sections/discussion.tex]
@@ -141,29 +155,33 @@ scan:
     - { file: sections/results.tex }
 ```
 
-Under `--strict` a file the manuscript pulls in but the ledger never lists is
-an error, not a warning: passing over it would be a gate with a hole in it.
+`scan` warns about an included name missing from `documents:`. Under `--strict`,
+an unlisted name resolving to a real `.tex` section inside the project is a
+configuration error; an unresolved package name or macro-built path only warns.
+`check` alone reports nothing about coverage, so run non-strict `scan` alongside
+it while adopting the ledger.
 
 > [!IMPORTANT]
 > Two things worth knowing before you start. An evaluation section in a
 > two-column paper typically hands you a few hundred `UNMAPPED` entries on the
-> first run, most of which collapse into a handful of table patterns and one
-> exemption for protocol constants. And a claim binds a number to a **field
-> that already exists** in your artifact: a derived figure like "improves by
-> 12.7%" has to be a field your analysis script writes, because the selector
+> first run, most of which collapse into one claim per table row (each covering
+> that row's cells) and one exemption for protocol constants. And a claim binds
+> a number to a **field that already exists** in your artifact: a derived figure
+> like "improves by 12.7%" has to be a field your analysis script writes, because the selector
 > deliberately cannot compute — a gate that evaluates expressions is a gate
 > that can be wrong in a second, independent way.
 
 ## A deterministic gate for an agent-written manuscript
 
 ```console
-$ texclaims check --json | jq '.summary'
-{ "FAIL": 0, "MISS": 0, "PASS": 9, "UNMAPPED": 0, "verdict": "OK" }
+$ texclaims check --json | jq -c '.summary'
+{"FAIL":0,"MISS":0,"PASS":9,"UNMAPPED":0,"WAIVED":1,"verdict":"OK"}
 ```
 
 [`skills/texclaims/SKILL.md`](https://github.com/YYYJH1/texclaims/blob/main/skills/texclaims/SKILL.md) is a ready-made agent
-skill — copy it into `.claude/skills/` and the agent knows how to bootstrap a
-ledger, read the four statuses, and re-anchor a claim after an edit.
+skill — copy the `skills/texclaims/` directory into `.claude/skills/` and the
+agent knows how to bootstrap a ledger, read the four record statuses and the
+`WAIVED` counter, and re-anchor a claim after an edit.
 
 The division of labour: the agent proposes ledger entries, `texclaims` rules on
 them. Good at reading sentences, bad at being a gate — this keeps the judgement
@@ -199,15 +217,18 @@ scan:
       start: '\section{Evaluation}'
 ```
 
-Anything else in that region is reported with its line and surrounding text:
+Anything else in that region is reported with its line and surrounding text.
+In `examples/demo/paper.tex`, insert `Throughput reached 8123 QPS. ` immediately
+before `All intervals use` in the Evaluation section. The scan then reports
+the following, after the nine passing claims, and exits 1:
 
 ```console
 $ texclaims scan --ledger claims.yaml --strict
-UNMAPPED - paper.tex:12 claimed=8123 :: .2\% across 5 seeds. Throughput reached 8123 QPS. All intervals use the 95\% confide
-== 9 PASS, 0 FAIL, 0 MISS, 1 UNMAPPED — FAIL ==
+UNMAPPED - paper.tex:13 claimed=8123 :: .2\% across 5 seeds. Throughput reached 8123 QPS. All intervals use the 95\% confide
+== 9 PASS, 0 FAIL, 0 MISS, 1 UNMAPPED, 1 WAIVED — FAIL ==
 ```
 
-Citation keys, labels, filenames and typesetting dimensions (`{12pt}`,
+Citation keys, labels, filenames and typesetting dimensions (`\hspace{12pt}`,
 `[width=0.5]`) are masked out first; a bare `9.9mm` in prose stays visible. The
 scan would rather ask about a measurement than go quiet about a result. It
 always runs the full check first — coverage a stale ledger could vouch for
@@ -330,12 +351,20 @@ selector grammar, transforms and tolerances, and every field of the schema.
   numbers from the same artifact instead.
 - Markdown is never masked, since it has no TeX grammar: a `%` in a `.md` file
   is literal and dimensions are not recognised.
-- A dimension is recognised only where LaTeX takes one (`{12pt}`,
-  `[width=0.5]`). A bare `12pt` in prose is surfaced for you to waive, because
-  nothing distinguishes it from a measurement.
+- Lengths are masked in recognised commands such as `\hspace{12pt}` and
+  `\setlength{\parskip}{12pt}`, as well as options such as `[width=0.5]`.
+  Bare or text-formatted measurements (`12pt`, `\textbf{9.9mm}`) stay visible;
+  unfamiliar length commands may need an exemption.
+- `\iffalse` masking preserves its live `\else` branch and tracks nested
+  primitive conditionals. Unclosed blocks or unknown nested conditional commands
+  are configuration errors because their coverage cannot be established safely.
 - A sign detached from its number (`$- 5$`) is read as positive. Write `$-5$`.
-- `\input` and `\include` are not followed. List every file in `documents:`;
-  the ledger refuses to load if the manuscript pulls in one you left out.
+- Include commands (`\input`, `\include`, `\subfile`, `\import` and their
+  supported variants) are detected but not followed. List each manuscript file
+  in `documents:`. `scan` reports an unlisted included name as `WARN`;
+  `scan --strict` refuses to run when it resolves to a real `.tex` section
+  inside the project. Unresolved package names and macro-built paths only warn.
+  `check` alone does not report these coverage gaps.
 - A percent is treated as literal inside `\verb`, `\url`, `\path`, `\href`,
   `\lstinline` and verbatim-like environments. A custom verbatim macro of your
   own is not known to it.
@@ -346,13 +375,14 @@ selector grammar, transforms and tolerances, and every field of the schema.
 
 ```console
 $ pip install -e ".[dev]"
-$ pytest                 # 517 tests
+$ pytest                 # 661 tests
 ```
 
 Mostly adversarial: each test in `tests/test_failclosed.py` describes a way an
 earlier version reported success while a number was wrong, missing, or
-unaccounted for. CI runs `texclaims` against its own example, and a test checks
-the output quoted above against what the tool actually prints.
+unaccounted for. CI runs `texclaims` against its own example. Tests reproduce
+the documented edits and compare console output in both READMEs, including
+failures and the JSON summary, against what the tool actually prints.
 
 ---
 

@@ -49,11 +49,16 @@ _StrictLoader.add_constructor(
 
 
 _INPUT_RE = re.compile(
-    r"(?<!\\)\\(?:input|include)(?![a-zA-Z])\s*(?:\{([^{}\n]+)\}|([^\s{}\\]+))")
+    r"(?<!\\)\\(?:input|include|subfile|subfileinclude|includestandalone)"
+    r"(?![a-zA-Z])\*?\s*(?:\[[^\]\n]*\]\s*)?"
+    r"(?:\{([^{}\n]+)\}|([^\s{}\\*\[\]]+))")
+_IMPORT_RE = re.compile(
+    r"(?<!\\)\\(?:import|subimport|inputfrom|subinputfrom|includefrom|subincludefrom)"
+    r"(?![a-zA-Z])\*?\s*\{([^{}\n]+)\}\s*\{([^{}\n]+)\}")
 
 
 def _included_files(path: Path) -> set[str]:
-    """Names a manuscript pulls in with \\input or \\include.
+    """Names a manuscript pulls in with single- or two-argument include commands.
 
     Read from the comment-masked text: a commented-out ``% \\input{old}`` and
     an ``\\input`` quoted inside a verbatim block are both ordinary, and
@@ -63,8 +68,14 @@ def _included_files(path: Path) -> set[str]:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return set()
-    return {(m.group(1) or m.group(2)).strip()
-            for m in _INPUT_RE.finditer(mask_comments(text))}
+    text = mask_comments(text)
+    included = {(m.group(1) or m.group(2)).strip()
+                for m in _INPUT_RE.finditer(text)}
+    # Import commands take a directory and a filename. Checking the directory
+    # alone only warns, letting a real unlisted section pass the strict gate.
+    included.update(m.group(1).strip().rstrip("/") + "/" + m.group(2).strip()
+                    for m in _IMPORT_RE.finditer(text))
+    return included
 
 
 def _resolve_inside(root: Path, rel: str, path: str) -> Path:

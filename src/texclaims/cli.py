@@ -6,6 +6,7 @@ Exit codes: 0 clean, 1 reconciliation failure, 2 configuration error.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import tempfile
@@ -31,12 +32,13 @@ documents:
 sources:
   summary: results/summary.json
 
-claims:
-  - name: example-claim
-    file: {doc}
-    anchor: {{ template: 'improves throughput by {{num}}\\%' }}
-    expect: 1
-    value: 'summary:.improvement_pct'
+claims: []
+# Replace [] with claims as you work through the scan's UNMAPPED list:
+#   - name: example-claim
+#     file: {doc}
+#     anchor: {{ template: 'improves throughput by {{num}}\\%' }}
+#     expect: 1
+#     value: 'summary:.improvement_pct'
 
 # exemptions:
 #   - name: confidence-level
@@ -51,10 +53,30 @@ scan:
 """
 
 
+def _silence_stdout() -> None:
+    # Avoid another broken pipe during interpreter shutdown, which can replace
+    # the audit's exit code. Close the spare descriptor after redirecting stdout.
+    fd = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(fd, sys.stdout.fileno())
+    finally:
+        os.close(fd)
+
+
+def _emit_report(report: Report, as_json: bool = False) -> int:
+    code = report.exit_code()
+    try:
+        report.emit_json() if as_json else report.emit_text()
+    except BrokenPipeError:
+        # The audit already ran. A consumer such as head must not turn its
+        # failing verdict into success merely by closing the output early.
+        _silence_stdout()
+    return code
+
+
 def _cmd_check(args: argparse.Namespace) -> int:
     state = run_check(load_ledger(args.ledger))
-    state.report.emit_json() if args.json else state.report.emit_text()
-    return state.report.exit_code()
+    return _emit_report(state.report, args.json)
 
 
 def _cmd_scan(args: argparse.Namespace) -> int:
@@ -82,15 +104,14 @@ def _cmd_scan(args: argparse.Namespace) -> int:
                 "every document a region or drop it from 'documents'")
     report = Report(unmapped_is_failure=args.strict)
     state = run_scan(ledger, report)
-    state.report.emit_json() if args.json else state.report.emit_text()
-    return state.report.exit_code()
+    return _emit_report(state.report, args.json)
 
 
 def _cmd_generate(args: argparse.Namespace) -> int:
     ledger = load_ledger(args.ledger)
     state = run_check(ledger)
     if state.report.failed:
-        state.report.emit_text()
+        _emit_report(state.report)
         print("generate refused: fix the failing claims first", file=sys.stderr)
         return 1
     # Every path in play resolves against the ledger's directory, including a
@@ -103,7 +124,10 @@ def _cmd_generate(args: argparse.Namespace) -> int:
     if args.check:
         diff = check_emitted(ledger, state, output)
         if diff:
-            print("\n".join(diff))
+            try:
+                print("\n".join(diff))
+            except BrokenPipeError:
+                _silence_stdout()
             print(f"emitted file {output} is stale; re-run generate", file=sys.stderr)
             return 1
         print(f"{output} is in sync", file=sys.stderr)
@@ -187,13 +211,28 @@ def main(argv: list[str] | None = None) -> int:
         try:
             sys.stdout.flush()
         except BrokenPipeError:
-            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+            _silence_stdout()
         return code
     except BrokenPipeError:
-        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
-        return 0
+        # No verdict was returned. Treat an unexpected output failure as an
+        # environment error; it cannot establish that the manuscript is clean.
+        _silence_stdout()
+        return 2
     except LedgerError as exc:
         print(f"CONFIG ERROR: {exc}", file=sys.stderr)
+        if getattr(args, "json", False):
+            # A bad ledger must still give JSON consumers a verdict. There is
+            # no completed audit to summarize, so do not invent record counts.
+            try:
+                json.dump({"records": [], "warnings": [],
+                           "summary": {"verdict": "CONFIG_ERROR"},
+                           "error": {"message": str(exc)}}, sys.stdout,
+                          indent=2, sort_keys=True)
+                print()
+                sys.stdout.flush()
+            except BrokenPipeError:
+                # Closing the error output early cannot clear exit 2.
+                _silence_stdout()
         return 2
     except Exception as exc:  # noqa: BLE001 - a traceback would collide with
         # exit 1, which means "a number is wrong". Anything unexpected is

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import math
+import subprocess
+import sys
 
 import pytest
 import yaml
@@ -583,6 +585,9 @@ def test_a_package_name_only_warns(project):
     ("We used 1,000 prompts", ["1,000"]),        # prose thousands still work
     ("1,234,567 rows", ["1,234,567"]),
     ("36{,}600 items", ["36{,}600"]),            # LaTeX's own thousands form
+    (r"50\,000 requests", [r"50\,000"]),
+    (r"1\,234\,567 rows", [r"1\,234\,567"]),
+    (r"(6\,36\,600)", ["6", "36", "600"]),       # the same tuple with thin spaces
     ("range 3--5 units", ["3", "5"]),            # an en-dash, not a minus
     ("delta of -5.2", ["-5.2"]),
     ("(-5) and (+3)", ["-5", "+3"]),
@@ -593,8 +598,9 @@ def test_latex_numeric_conventions(text, expected):
     assert [m.group(0) for m in NUMBER_RE.finditer(text)] == expected
 
 
-def test_latex_thousands_parse_to_their_value():
-    assert parse_number("36{,}600").value == 36600.0
+@pytest.mark.parametrize("token", ["36{,}600", r"36\,600"])
+def test_latex_thousands_parse_to_their_value(token):
+    assert parse_number(token).value == 36600.0
 
 
 def test_an_empty_ledger_loads_but_cannot_pass_strict(project, capsys):
@@ -610,3 +616,422 @@ def test_an_empty_ledger_loads_but_cannot_pass_strict(project, capsys):
     assert main(["scan", "--ledger", str(path)]) == 0        # exploratory run
     assert main(["scan", "--ledger", str(path), "--strict"]) == 2
     assert "claims nothing" in capsys.readouterr().err
+
+
+# --- exact differences must survive formatting and explicit tolerances ------
+
+@pytest.mark.parametrize("tolerances,code", [
+    ({}, 1),
+    ({"abs_tol": 0}, 1),
+    ({"rel_tol": 0}, 1),
+    ({"abs_tol": 0.5}, 1),
+    ({"rel_tol": 1e-17}, 1),
+    ({"abs_tol": 1}, 0),
+    ({"abs_tol": 0, "rel_tol": 1e-15}, 0),
+])
+def test_huge_integer_tolerances_use_the_exact_difference(project, capsys, tolerances, code):
+    path = _ledger(project, "The count is 9007199254740992 items.",
+                   [_claim(anchor={"template": "count is {num} items"}, **tolerances)],
+                   artifacts={"results/summary.json": {"value": 9007199254740993}})
+    assert main(["check", "--ledger", str(path)]) == code
+    out = capsys.readouterr().out
+    assert out.startswith("FAIL" if code else "PASS")
+    if code:
+        assert "= 1 exceeds" in out
+    paper = path.parent / "paper.tex"
+    paper.write_text(paper.read_text().replace("740992", "740993"), encoding="utf-8")
+    assert main(["check", "--ledger", str(path)]) == 0
+
+
+@pytest.mark.parametrize("sign", ["", "\u2212"])
+@pytest.mark.parametrize("suffix", ["", r"\%"])
+def test_latex_grouped_huge_integer_uses_shared_normalization(project, capsys, sign, suffix):
+    value = -9007199254740993 if sign else 9007199254740993
+    path = _ledger(project, f"The count is {sign}9{{,}}007{{,}}199{{,}}254{{,}}740{{,}}992{suffix}.",
+                   [_claim(anchor={"near": {"context": "The count is"}})],
+                   artifacts={"results/summary.json": {"value": value}})
+    assert main(["scan", "--ledger", str(path), "--strict"]) == 1
+    assert "= 1 exceeds" in capsys.readouterr().out
+    paper = path.parent / "paper.tex"
+    paper.write_text(paper.read_text().replace("{,}992", "{,}993"), encoding="utf-8")
+    assert main(["scan", "--ledger", str(path), "--strict"]) == 0
+
+
+# --- artifact transformations cannot repair invalid source data -------------
+
+@pytest.mark.parametrize("value,selector", [
+    (True, ".value | abs"),
+    (False, ".value | abs"),
+    ([True, True], ".value[] | abs | mean"),
+    ([1, True], ".value[] | abs | sum"),
+])
+def test_abs_cannot_turn_boolean_artifacts_into_numbers(project, capsys, value, selector):
+    path = _ledger(project, "The value is 1 units.",
+                   [_claim(anchor={"template": "value is {num} units"},
+                           value=f"summary:{selector}")],
+                   artifacts={"results/summary.json": {"value": value}})
+    assert main(["check", "--ledger", str(path)]) == 2
+    assert "function 'abs' received a boolean" in capsys.readouterr().err
+
+
+def _csv_claim(project, csv_text, number):
+    return project(
+        documents={"paper.tex": f"The score is {number} units.\n"},
+        artifacts={"runs.csv": csv_text},
+        ledger={"sources": {"runs": "runs.csv"},
+                "claims": [_claim(anchor={"template": "score is {num} units"},
+                                  value="runs:[0].score")]},
+    )
+
+
+def test_multiline_csv_cell_is_not_joined_into_a_number(project, capsys):
+    path = _csv_claim(project, 'name,score\n"a","12\n34"\n', 1234)
+    rows = load_artifact(path.parent / "runs.csv", "sources.runs")
+    assert rows[0]["score"] == "12\n34"
+    assert main(["check", "--ledger", str(path)]) == 2
+    assert "produced str, expected a scalar number" in capsys.readouterr().err
+    # Multiline labels are valid CSV; a numeric score beside one still works.
+    path = _csv_claim(project, 'name,score\n"a\nb",1234\n', 1234)
+    assert main(["check", "--ledger", str(path)]) == 0
+
+
+def test_unclosed_csv_quote_is_a_configuration_error(project, capsys):
+    path = _csv_claim(project, 'name,score\na,"999', 999)
+    assert main(["check", "--ledger", str(path)]) == 2
+    assert "malformed CSV" in capsys.readouterr().err
+    path = _csv_claim(project, 'name,score\na,"999"\n', 999)
+    assert main(["check", "--ledger", str(path)]) == 0
+
+
+@pytest.mark.parametrize("extra", [",999", ","])
+def test_extra_csv_fields_cannot_be_silently_dropped(project, capsys, extra):
+    path = _csv_claim(project, f"name,score\na,1{extra}\n", 1)
+    assert main(["check", "--ledger", str(path)]) == 2
+    assert "CSV row 2 has 1 extra field" in capsys.readouterr().err
+    path = _csv_claim(project, "name,score\na,1\n", 1)
+    assert main(["check", "--ledger", str(path)]) == 0
+
+
+# --- masking must preserve live prose, including formatted measurements ------
+
+@pytest.mark.parametrize("conditional", [
+    r"\iffalse Draft 888. \else Result 9.9. \fi",
+    r"\iffalse \iffalse Draft 777. \else Draft 888. \fi \else Result 9.9. \fi",
+    r"\iffalse \iftrue Draft 777. \else Draft 888. \fi \else Result 9.9. \fi",
+    r"\iffalse Draft 888. \else \iffalse Draft 777. \else Result 9.9. \fi \fi",
+    "\\iffalse\nDraft 888. % \\else fake delimiter\n\\else\nResult 9.9.\n\\fi",
+])
+def test_iffalse_else_branch_remains_in_strict_coverage(project, capsys, conditional):
+    path = _ledger(project, "Accuracy is 94.2 units.\n" + conditional,
+                   [_claim(anchor={"template": "is {num} units"})])
+    state = run_scan(load_ledger(path))
+    assert _unmapped(state) == ["9.9"]
+    doc = state.document("paper.tex")
+    record = next(r for r in state.report.records if r.status == "UNMAPPED")
+    assert record.line == doc.raw[:doc.raw.index("9.9")].count("\n") + 1
+    assert main(["scan", "--ledger", str(path), "--strict"]) == 1
+
+
+def test_claim_in_iffalse_else_branch_is_checked(project, capsys):
+    path = _ledger(project, r"\iffalse Draft 888. \else Accuracy is 94.2 units. \fi",
+                   [_claim(anchor={"template": "is {num} units"})])
+    assert main(["scan", "--ledger", str(path), "--strict"]) == 0
+    assert "PASS" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("body", [
+    r"\iffalse Draft 888.",
+    r"\iffalse Draft 888. \else Live text.",
+    r"\iffalse \ifcustom Draft 888. \fi \else Result 9.9. \fi",
+])
+def test_ambiguous_false_branch_cannot_certify_coverage(project, capsys, body):
+    path = _ledger(project, "Accuracy is 94.2 units.\n" + body,
+                   [_claim(anchor={"template": "is {num} units"})])
+    assert main(["scan", "--ledger", str(path), "--strict"]) == 2
+    assert "CONFIG ERROR" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("measurement", [
+    "9.9mm", r"\textbf{9.9mm}", r"\emph{9.9 mm}", "{9.9mm}",
+    r"\textbf{\emph{9.9mm}}", "$d=9.9mm$", "plus 9.9mm",
+])
+def test_formatting_cannot_hide_a_measurement(project, capsys, measurement):
+    path = _ledger(project, "Accuracy is 94.2 units. Length is " + measurement + ".",
+                   [_claim(anchor={"template": "is {num} units"})])
+    assert _unmapped(run_scan(load_ledger(path))) == ["9.9"]
+    assert main(["scan", "--ledger", str(path), "--strict"]) == 1
+
+
+@pytest.mark.parametrize("layout", [
+    r"\hspace{9.9mm}", r"\vspace*{9.9mm plus 1pt minus 0.5pt}",
+    r"\setlength{\parskip}{9.9mm}", r"\addtolength{\parskip}{-9.9mm}",
+    r"\rule[1pt]{9.9mm}{0.5pt}", r"\fontsize{9pt}{12pt}\selectfont",
+    r"\hskip 9.9mm plus 1pt", r"\vskip 9.9mm", r"\kern 9.9mm",
+    "\\hspace{9.9\nmm}",
+])
+def test_known_length_commands_still_mask_their_dimensions(project, capsys, layout):
+    path = _ledger(project, "Accuracy is 94.2 units.\n" + layout,
+                   [_claim(anchor={"template": "is {num} units"})])
+    state = run_scan(load_ledger(path))
+    assert _unmapped(state) == []
+    doc = state.document("paper.tex")
+    assert len(doc.raw) == len(doc.scan_masked)
+    assert doc.raw.count("\n") == doc.scan_masked.count("\n")
+    assert main(["scan", "--ledger", str(path), "--strict"]) == 0
+
+
+# --- output delivery must not override the audit's verdict ------------------
+
+@pytest.mark.parametrize("command", ["check", "scan"])
+@pytest.mark.parametrize("json_output", [False, True])
+@pytest.mark.parametrize("wrong,code", [(False, 0), (True, 1)])
+def test_closed_stdout_preserves_the_computed_verdict(project, command, json_output, wrong, code):
+    # More than a pipe buffer of records, with the possible failure last: an
+    # early-closing reader must not decide the verdict from the first PASS.
+    n = 2000
+    body = "Accuracy is 94.2 units.\n" * (n - 1)
+    body += "Accuracy is 99.9 units." if wrong else "Accuracy is 94.2 units."
+    path = _ledger(project, body,
+                   [_claim(anchor={"template": "is {num} units"}, expect=n)])
+    argv = [sys.executable, "-m", "texclaims", command, "--ledger", str(path)]
+    if command == "scan":
+        argv.append("--strict")
+    if json_output:
+        argv.append("--json")
+    normal = subprocess.run(argv, capture_output=True, text=True, timeout=20)
+    assert normal.returncode == code, normal.stderr
+    with subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          text=True) as proc:
+        proc.stdout.close()
+        proc.stdout = None
+        _, err = proc.communicate(timeout=20)
+    assert proc.returncode == code, err
+    assert "BrokenPipeError" not in err
+
+
+# --- package include commands must reach the same strict gate as input -------
+
+def _unlisted_section(project, inclusion):
+    return project(
+        documents={"paper.tex": TEX % ("Accuracy is 94.2 units.\n" + inclusion),
+                   "sections/more.tex": "Unclaimed results 999 and 8123.\n"},
+        artifacts={"results/summary.json": {"value": 94.2}},
+        ledger={"documents": ["paper.tex"],
+                "sources": {"summary": "results/summary.json"},
+                "claims": [_claim(anchor={"template": "is {num} units"})],
+                "scan": {"regions": [{"file": "paper.tex"}]}},
+    )
+
+
+@pytest.mark.parametrize("command", [
+    "input", "include", "subfile", "subfileinclude", "includestandalone",
+])
+@pytest.mark.parametrize("modifier", ["", "*", "[mode=tex]", "*[mode=tex]"])
+def test_single_argument_includes_cannot_hide_unlisted_sections(
+    project, capsys, command, modifier,
+):
+    path = _unlisted_section(project, f"\\{command}{modifier}{{sections/more}}")
+    ledger = load_ledger(path)
+    assert ledger.unlisted_includes == ["sections/more"]
+    assert ledger.missing_sections == ["sections/more"]
+    assert main(["scan", "--ledger", str(path), "--strict"]) == 2
+    assert "sections/more" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("command", [
+    "import", "subimport", "inputfrom", "subinputfrom", "includefrom", "subincludefrom",
+])
+@pytest.mark.parametrize("star,directory", [("", "sections/"), ("*", "sections")])
+def test_import_arguments_are_joined_before_the_strict_include_gate(
+    project, capsys, command, star, directory,
+):
+    path = _unlisted_section(project, f"\\{command}{star}{{{directory}}}{{more}}")
+    ledger = load_ledger(path)
+    assert ledger.unlisted_includes == ["sections/more"]
+    assert ledger.missing_sections == ["sections/more"]
+    assert main(["scan", "--ledger", str(path), "--strict"]) == 2
+    assert "sections/more" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("inclusion", [
+    r"\subfile* sections/more", r"\input*[mode=tex] sections/more",
+])
+def test_braceless_include_does_not_treat_the_star_as_a_filename(project, inclusion):
+    ledger = load_ledger(_unlisted_section(project, inclusion))
+    assert ledger.missing_sections == ["sections/more"]
+
+
+@pytest.mark.parametrize("inclusion", [
+    r"% \subfile{sections/more}", r"\verb|\import{sections/}{more}|",
+    r"\begin{verbatim}\subfileinclude{sections/more}\end{verbatim}",
+])
+def test_inactive_package_includes_still_do_not_require_documents(project, inclusion):
+    path = _unlisted_section(project, inclusion)
+    assert load_ledger(path).unlisted_includes == []
+    assert main(["scan", "--ledger", str(path), "--strict"]) == 0
+
+
+# --- a missing scan token cannot authorize part of a dotted run --------------
+
+@pytest.mark.parametrize("body,anchor,value", [
+    ("We ran on CUDA 1.2.3 across seeds.", {"template": "CUDA {num}"}, 1.2),
+    ("We ran on CUDA 1.2.3 across seeds.", {"pattern": r"CUDA 1\.(2\.3)"}, 2.3),
+    ("We ran on CUDA1.2.3 across seeds.", {"template": "CUDA{num}"}, 1.2),
+])
+@pytest.mark.parametrize("command", [["check"], ["scan", "--strict"]])
+def test_dotted_run_cannot_be_certified_as_a_decimal(project, capsys, body, anchor, value, command):
+    path = _ledger(project, body, [_claim(anchor=anchor)],
+                   artifacts={"results/summary.json": {"value": value}})
+    assert main([*command, "--ledger", str(path)]) == 2
+    err = capsys.readouterr().err
+    assert "1.2.3" in err
+    assert "takes only part of a dotted run" in err
+
+
+def test_capture_cannot_extend_past_its_scan_token(project, capsys):
+    # The capture alone parses as 36600, but in this comma-delimited run the
+    # scanner sees 36 and 600 separately. An inverted trailing slice is not a suffix.
+    path = _ledger(project, "Coordinates (6,36,600).",
+                   [_claim(anchor={"pattern": r"6,(36,600)"})],
+                   artifacts={"results/summary.json": {"value": 36600}})
+    assert main(["check", "--ledger", str(path)]) == 2
+    assert "capture group 1 matched '36,600'" in capsys.readouterr().err
+
+
+def test_identifier_glued_decimal_remains_explicitly_anchorable(project):
+    path = _ledger(project, "We ran on CUDA1.2 across seeds.",
+                   [_claim(anchor={"template": "CUDA{num}"})],
+                   artifacts={"results/summary.json": {"value": 1.2}})
+    assert main(["scan", "--ledger", str(path), "--strict"]) == 0
+
+
+# --- whole-span exemptions remain waivers, but their breadth is visible -------
+
+def test_greedy_exemption_counts_every_successfully_waived_token(project, capsys):
+    path = _ledger(
+        project,
+        "Accuracy is 94.2 units.\n"
+        r"We use the 95\% confidence level with 8123, 4.87 and 1234." "\nProtocol 42.\n",
+        [_claim(anchor={"template": "is {num} units"})],
+        exemptions=[
+            {"name": "wide", "file": "paper.tex", "expect": 1,
+             "anchor": {"pattern": r"the (95)\\% confidence level.*"},
+             "reason": "Fixed protocol constants."},
+            {"name": "protocol", "file": "paper.tex", "expect": 1,
+             "anchor": {"template": "Protocol {num}"},
+             "reason": "Protocol identifier."},
+        ],
+    )
+    assert main(["scan", "--ledger", str(path), "--strict"]) == 0
+    out, err = capsys.readouterr()
+    assert len(out.splitlines()) == 1
+    assert out.startswith("PASS ")
+    assert "1 PASS, 0 FAIL, 0 MISS, 0 UNMAPPED, 5 WAIVED — OK" in err
+    assert main(["scan", "--ledger", str(path), "--strict", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["waived"] == {"wide": 4, "protocol": 1}
+    assert payload["summary"]["WAIVED"] == 5
+    assert [r["status"] for r in payload["records"]] == ["PASS"]
+    assert payload["warnings"] == []
+
+
+def test_conflicting_exemption_does_not_count_as_a_successful_waiver(project):
+    anchor = {"template": "is {num} units"}
+    path = _ledger(
+        project, "Accuracy is 94.2 units.", [_claim(anchor=anchor)],
+        exemptions=[{"name": "duplicate", "file": "paper.tex", "expect": 1,
+                     "anchor": anchor, "reason": "Fixed protocol constant."}],
+    )
+    report = run_check(load_ledger(path)).report
+    assert report.exit_code() == 1
+    assert report.waived == {}
+    assert report.counts()["WAIVED"] == 0
+
+
+# --- an out-of-range verdict must survive text and JSON rendering ------------
+
+@pytest.mark.parametrize("json_output", [False, True])
+def test_integer_outside_float_range_renders_the_fail_verdict(project, capsys, json_output):
+    value = 10 ** 400
+    path = _ledger(project, "Accuracy is 94.2 units.",
+                   [_claim(anchor={"template": "is {num} units"})],
+                   artifacts={"results/summary.json": {"value": value}})
+    argv = ["check", "--ledger", str(path)] + (["--json"] if json_output else [])
+    assert main(argv) == 1
+    out, err = capsys.readouterr()
+    assert "INTERNAL ERROR" not in err
+    assert "value is out of the auditable range" in out
+    if json_output:
+        payload = json.loads(out)
+        (record,) = payload["records"]
+        assert record["status"] == "FAIL"
+        assert isinstance(record["expected"], int)
+        assert record["expected"] == value
+    else:
+        assert out.startswith("FAIL ")
+        assert f"expected={value}" in out
+
+
+def test_generate_reports_an_oversized_integer_without_an_internal_error(project, capsys):
+    path = _ledger(
+        project, "Accuracy is 94.2 units.",
+        [_claim(anchor={"template": "is {num} units"})],
+        artifacts={"results/summary.json": {"value": 94.2, "huge": 10 ** 400}},
+        emit={"output": "numbers.tex", "macros": [{"name": "Huge", "value": "summary:.huge"}]},
+    )
+    assert main(["generate", "--ledger", str(path)]) == 2
+    err = capsys.readouterr().err
+    assert "macro 'Huge' value is out of the auditable range" in err
+    assert "INTERNAL ERROR" not in err
+    assert not (path.parent / "numbers.tex").exists()
+
+
+# --- JSON diagnostics keep configuration errors auditable through a pipe -----
+
+@pytest.mark.parametrize("command", ["check", "scan"])
+def test_closed_json_error_output_preserves_exit_two(tmp_path, command):
+    argv = [sys.executable, "-m", "texclaims", command, "--json",
+            "--ledger", str(tmp_path / "missing.yaml")]
+    with subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          text=True) as proc:
+        proc.stdout.close()
+        proc.stdout = None
+        _, err = proc.communicate(timeout=20)
+    assert proc.returncode == 2
+    assert "CONFIG ERROR: cannot read ledger" in err
+    assert "BrokenPipeError" not in err
+
+
+# --- LaTeX thin-space thousands retain one token and exact integer checking --
+
+def test_thinspace_thousands_can_be_claimed_in_strict_scan(project, capsys):
+    path = _ledger(
+        project, r"We served 50\,000 requests and cached 36{,}600 of them.",
+        [_claim(name="served", anchor={"template": "served {num} requests"}),
+         _claim(name="cached", anchor={"template": "cached {num} of them"}, value="summary:.cached")],
+        artifacts={"results/summary.json": {"value": 50000, "cached": 36600}},
+    )
+    assert main(["scan", "--ledger", str(path), "--strict"]) == 0
+    out, err = capsys.readouterr()
+    assert r"claimed=50\,000 expected=50000" in out
+    assert "2 PASS, 0 FAIL, 0 MISS, 0 UNMAPPED" in err
+
+
+@pytest.mark.parametrize("tolerance", [{}, {"abs_tol": 0}])
+def test_thinspace_thousands_cannot_hide_a_huge_integer_mismatch(project, capsys, tolerance):
+    path = _ledger(
+        project, r"Count is 9\,007\,199\,254\,740\,992 units.",
+        [_claim(anchor={"template": "Count is {num} units"}, **tolerance)],
+        artifacts={"results/summary.json": {"value": 9007199254740993}},
+    )
+    assert main(["scan", "--ledger", str(path), "--strict"]) == 1
+    assert "= 1 exceeds" in capsys.readouterr().out
+    paper = path.parent / "paper.tex"
+    paper.write_text(paper.read_text().replace(r"\,992", r"\,993"), encoding="utf-8")
+    assert main(["scan", "--ledger", str(path), "--strict"]) == 0
+
+
+def test_thinspace_thousands_keep_their_display_precision():
+    parsed = parse_number(r"1\,234.50e-2")
+    assert parsed.value == pytest.approx(12.345)
+    assert parsed.decimals == 4

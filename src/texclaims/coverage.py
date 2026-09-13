@@ -79,7 +79,7 @@ def run_scan(ledger: Ledger, report: Report | None = None) -> CheckState:
             "nothing in it is audited")
     if not ledger.scan_regions:
         state.report.warn("no scan regions declared; coverage scan had nothing to do")
-    elif len(ledger.scan_regions) < len(ledger.documents):
+    else:
         # A multi-file paper is the normal case, and a document nobody scans is
         # a silent hole: the run goes green while a whole section is unaudited.
         scanned = {r.file for r in ledger.scan_regions}

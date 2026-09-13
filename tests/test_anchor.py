@@ -348,6 +348,23 @@ def test_near_context_without_a_number_anchors_the_following_number(project):
     assert (record.status, record.claimed) == ("PASS", "12.7\\%")
 
 
+@pytest.mark.parametrize("separator", [
+    "% old note: was 17.2 before the rerun",
+    r"\label{sec:utility17}",
+])
+def test_near_crosses_comment_or_label_only_line(project, separator):
+    path = _ledger(
+        project,
+        f"The mean utility of\n{separator}\nCA-MAPPO is 18.44 across all seeds.\n",
+        [{"name": "utility", "file": "paper.tex", "expect": 1,
+          "anchor": {"near": {"context": "mean utility of", "occurrence": 1}},
+          "value": "summary:.utility"}],
+        summary={"utility": 18.44},
+    )
+    (record,) = _records(path)
+    assert (record.status, record.claimed, record.line) == ("PASS", "18.44", 3)
+
+
 # --- spans feed coverage accounting -----------------------------------------
 
 def test_template_span_covers_its_token_and_leaves_siblings_unmapped(project):

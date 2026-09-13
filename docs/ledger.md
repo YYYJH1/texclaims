@@ -16,7 +16,8 @@ from the start of the context to the end of that paragraph, so put the context
 before the number, not after it.
 
 In a `template`, whitespace matches any whitespace run (line-wrapping cannot
-break it) and `{num}` handles signs, Unicode minus, thousands separators,
+break it) and `{num}` handles signs, Unicode minus, thousands separators
+(`50,000`, `50{,}000`, `50\,000`),
 scientific notation, leading-dot decimals like `.05`, and `\%`.
 
 For a table row where one regex serves several cells, name it and map the
@@ -37,6 +38,12 @@ claims:
       3: 'summary:.fastcache.mean_ms'
       4: 'summary:.fastcache.std_ms'
 ```
+
+A claim's `groups` bind the same artifact fields at every occurrence of its
+anchor. `expect: 2` means the same numbers are printed twice and must agree;
+it is not a row index. A multi-row table therefore needs one claim per row,
+each anchored on that row's label and mapped to that row's artifact fields.
+Named patterns reuse regex syntax, not a sequence of row bindings.
 
 A capture group must take the whole number at that position. A group matching
 `88` out of `88.9`, or one leaving the minus sign outside, is a configuration
@@ -66,8 +73,7 @@ elaborate belongs in the script that writes the artifact — an auditor that
 computes its own statistics is a second implementation to keep in sync.
 `transform` applies `scale → negate → absolute → offset`.
 
-
-<summary><strong>Full schema (version 1)</strong></summary>
+## Full schema (version 1)
 
 ```yaml
 version: 1                     # required
@@ -122,9 +128,21 @@ pinning:                       # optional; artifact immutability
 
 All paths resolve against the ledger's own directory and may not leave it.
 
+An emitted macro without `format` uses `%g` formatting (six significant figures),
+which can round the value and switch to scientific notation.
+
 An exemption waives **every** number inside its anchor match, not only the
 `{num}` capture — so keep exemption anchors tight, and use a `near` anchor when
 you mean to waive exactly one number in a crowded sentence.
+
+For a completed audit, the text summary and JSON `summary.WAIVED` count waived number
+occurrences; JSON `waived` breaks the count down by exemption name. These are
+counters, not per-number records, and do not change the exit code.
+
+JSON `summary.verdict` is `OK` (exit 0) or `FAIL` (exit 1) for a completed
+audit. With `--json`, ledger or artifact errors produce `CONFIG_ERROR` (exit 2),
+empty `records` and `warnings`, and `error.message`; no audit counts are
+reported. The text error is also written to stderr.
 
 `optional: true` is the one documented exception to fail-closed: a claim that
 matches zero times is skipped instead of reported as `MISS`. It exists for

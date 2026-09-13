@@ -46,11 +46,11 @@ class CheckState:
             self.artifacts[source] = load_artifact(path, f"sources.{source}")
         return self.artifacts[source]
 
-    def resolve(self, ref: ValueRef) -> float:
+    def resolve(self, ref: ValueRef, owner: str) -> int | float:
         try:
             return select(self.artifact(ref.source), ref.selector)
         except LedgerError as exc:
-            raise LedgerError(f"[{ref.raw}] {exc}") from exc
+            raise LedgerError(f"[{ref.raw}] {exc}", path=owner) from exc
 
     def owner_of(self, rel_name: str, span: Span) -> str:
         return self.span_owner.get((rel_name, span[0]), "another entry")
@@ -109,10 +109,10 @@ def _check_claim(state: CheckState, claim: Claim) -> None:
     # Resolve expectations once per claim.
     expected: dict[int, float] = {}
     if claim.value is not None:
-        expected[1] = claim.transform.apply(state.resolve(claim.value))
+        expected[1] = claim.transform.apply(state.resolve(claim.value, path))
     else:
         for g, ref in claim.groups.items():
-            expected[g] = claim.transform.apply(state.resolve(ref))
+            expected[g] = claim.transform.apply(state.resolve(ref, f"{path} group {g}"))
 
     for match in matches:
         for hit in match.numbers:
@@ -160,6 +160,8 @@ def _check_exemption(state: CheckState, exemption: Exemption) -> None:
                     note="this number occurrence is already claimed by "
                          f"{state.owner_of(exemption.file, tok.span(0))!r}",
                 ))
+            else:
+                state.report.waive(exemption.name)
 
 
 def run_check(ledger: Ledger, report: Report | None = None) -> CheckState:

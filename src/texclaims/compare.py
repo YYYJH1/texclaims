@@ -18,7 +18,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from .document import ParsedNumber
+from .document import ParsedNumber, normalize_number
 
 _REL_SLACK = 1e-9
 # Beyond this the half-unit tolerance itself overflows; such a number cannot
@@ -39,22 +39,21 @@ def _exact_mismatch(claimed: ParsedNumber, expected: int | float) -> "Verdict | 
         return None
     if not isinstance(expected, int):
         return None  # a float this large has already lost the exact value
-    text = claimed.token.replace("\u2212", "-").replace(",", "").rstrip("\\%")
     try:
-        claimed_int = int(text)
+        claimed_int = int(normalize_number(claimed.token))
     except ValueError:
         return None
     expected_int = int(expected)
     if claimed_int == expected_int:
         return Verdict(True, 0.0, 0.0, "exact-integer")
-    return Verdict(False, float(abs(claimed_int - expected_int)), 0.0,
+    return Verdict(False, abs(claimed_int - expected_int), 0.0,
                    "integers beyond float precision differ exactly")
 
 
 @dataclass(frozen=True)
 class Verdict:
     ok: bool
-    diff: float
+    diff: int | float
     tolerance: float
     note: str
 
@@ -77,14 +76,13 @@ def check_value(
             return Verdict(False, math.inf, 0.0, "value is not finite")
     except OverflowError:  # an int too large to convert to float
         return Verdict(False, math.inf, 0.0, "value is out of the auditable range")
-    if abs_tol is None and rel_tol is None:
-        # Only the default path needs exact integer handling; an explicit
-        # tolerance is the author saying how close is close enough.
-        exact = _exact_mismatch(claimed, expected)
-        if exact is not None:
-            return exact
-    diff = abs(claimed.value - expected)
-    if not math.isfinite(diff):
+    exact = _exact_mismatch(claimed, expected)
+    if exact is not None and abs_tol is None and rel_tol is None:
+        return exact
+    # Explicit tolerances change the allowed difference, not its arithmetic.
+    # Float subtraction would make neighbouring huge integers pass abs_tol=0.
+    diff = exact.diff if exact is not None else abs(claimed.value - expected)
+    if isinstance(diff, float) and not math.isfinite(diff):
         # Subtracting two finite values can still overflow; a difference the
         # arithmetic cannot represent must not be compared against anything.
         return Verdict(False, math.inf, 0.0, "difference overflows")

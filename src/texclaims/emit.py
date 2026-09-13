@@ -9,12 +9,12 @@ The whole file is built in memory first — any failure produces no output.
 from __future__ import annotations
 
 import difflib
-import math
 from pathlib import Path
 
 from .audit import CheckState
 from .errors import LedgerError
 from .ledger import Ledger
+from .report import _in_float_range
 
 
 def render_numbers(ledger: Ledger, state: CheckState) -> str:
@@ -25,9 +25,15 @@ def render_numbers(ledger: Ledger, state: CheckState) -> str:
         f"% Macros: {len(ledger.emit.macros)}",
     ]
     for macro in ledger.emit.macros:
-        raw = state.resolve(macro.value)
-        value = raw * macro.scale
-        if not math.isfinite(value):
+        raw = state.resolve(macro.value, f"macro '{macro.name}'")
+        try:
+            value = raw * macro.scale
+        except OverflowError as exc:
+            # Multiplying a huge integer by even the default 1.0 can fail
+            # before formatting; report the macro instead of an internal error.
+            raise LedgerError(
+                f"macro {macro.name!r} value is out of the auditable range") from exc
+        if not _in_float_range(value):
             # A macro is quoted as a result; emitting "nan" would put it in the
             # PDF and still exit 0.
             raise LedgerError(
@@ -44,7 +50,8 @@ def render_numbers(ledger: Ledger, state: CheckState) -> str:
                 f"bad format spec {macro.format!r} for macro {macro.name!r}: {exc}") from exc
         # A bare % would comment out the rest of the line in LaTeX.
         rendered = rendered.replace("%", r"\%")
-        lines.append(f"% {macro.name} <- {macro.value.raw} = {raw:.10g}")
+        raw_text = f"{raw:.10g}" if _in_float_range(raw) else str(raw)
+        lines.append(f"% {macro.name} <- {macro.value.raw} = {raw_text}")
         lines.append(f"\\newcommand{{\\{macro.name}}}{{{rendered}}}")
     return "\n".join(lines) + "\n"
 

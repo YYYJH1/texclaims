@@ -64,6 +64,16 @@ exactly which sentence broke.
 | `MISS` | The anchor no longer matches anything. | The prose was edited. Re-anchor the claim. Do **not** delete it. |
 | `UNMAPPED` | A number in the region is unaccounted for. | Add a claim, or an exemption with a real reason. |
 
+The summary also counts `WAIVED` number occurrences covered by exemptions.
+This counter adds no per-number records and does not affect the exit code.
+JSON includes the total in `summary.WAIVED` and counts by exemption name in
+`waived`; inspect a large count for an anchor that waives unrelated results.
+
+JSON `summary.verdict` is `OK` (exit 0) or `FAIL` (exit 1). Ledger or artifact
+errors with `--json` return `CONFIG_ERROR` (exit 2) and an `error.message`,
+with empty `records` and `warnings` and no audit counts. Fix that configuration
+error before interpreting the manuscript's numbers.
+
 A `FAIL` is a finding, not an obstacle. When a claim fails, the answer is
 either that the manuscript is wrong or that the ledger points at the wrong
 field — never that the tolerance was too tight. The default tolerance is half

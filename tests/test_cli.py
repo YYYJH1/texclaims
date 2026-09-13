@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 import yaml
@@ -95,7 +96,7 @@ def test_reconciled_number_exits_zero(project, run):
     assert out.splitlines() == [
         "PASS     throughput paper.tex:4 claimed=12.7 expected=12.73421 tol=0.05"
     ]
-    assert "== 1 PASS, 0 FAIL, 0 MISS, 0 UNMAPPED — OK ==" in err
+    assert "== 1 PASS, 0 FAIL, 0 MISS, 0 UNMAPPED, 0 WAIVED — OK ==" in err
 
 
 def test_fabricated_number_exits_one(project, run):
@@ -104,7 +105,7 @@ def test_fabricated_number_exits_one(project, run):
     assert code == 1
     assert out.startswith("FAIL     throughput paper.tex:4 claimed=18.4 expected=12.73421")
     assert "exceeds display-precision tolerance" in out
-    assert "== 0 PASS, 1 FAIL, 0 MISS, 0 UNMAPPED — FAIL ==" in err
+    assert "== 0 PASS, 1 FAIL, 0 MISS, 0 UNMAPPED, 0 WAIVED — FAIL ==" in err
 
 
 def test_rewritten_sentence_exits_one_as_miss(project, run):
@@ -134,7 +135,28 @@ def test_bad_selector_is_config_error_not_a_failed_claim(project, run):
     ledger = make(project, claims=[throughput_claim(value="summary:.no_such_key")])
     code, out, err = run("check", "--ledger", str(ledger))
     assert code == 2
-    assert "CONFIG ERROR: [summary:.no_such_key] key 'no_such_key' not found" in err
+    assert "CONFIG ERROR: claim 'throughput': [summary:.no_such_key] key 'no_such_key' not found" in err
+
+
+def test_bad_group_selector_names_the_claim_and_group(project, run):
+    claim = {"name": "latency-row", "file": "paper.tex", "expect": 1,
+             "anchor": {"template": "from {num} to {num}"},
+             "groups": {1: "summary:.baseline_ms", 2: "summary:.missing"}}
+    ledger = make(project, paper="Latency from 4.87 to 3.21.\n", claims=[claim],
+                  summary={"baseline_ms": 4.87})
+    code, out, err = run("check", "--ledger", str(ledger))
+    assert code == 2
+    assert "claim 'latency-row' group 2: [summary:.missing] key 'missing' not found" in err
+
+
+def test_bad_macro_selector_names_the_macro(project, run):
+    emit = {"output": "numbers.tex", "macros": [
+        {"name": "MissingMetric", "value": "summary:.missing"}]}
+    ledger = make(project, emit=emit)
+    code, out, err = run("generate", "--ledger", str(ledger))
+    assert code == 2
+    assert "macro 'MissingMetric': [summary:.missing] key 'missing' not found" in err
+    assert not (ledger.parent / "numbers.tex").exists()
 
 
 def test_missing_subcommand_is_a_usage_error():
@@ -157,9 +179,10 @@ def test_json_output_is_parsable_and_reports_ok(project, run):
     code, out, err = run("check", "--ledger", str(ledger), "--json")
     assert code == 0
     payload = json.loads(out)
-    assert set(payload) == {"records", "warnings", "summary"}
+    assert set(payload) == {"records", "warnings", "waived", "summary"}
+    assert payload["waived"] == {}
     assert payload["summary"] == {
-        "PASS": 1, "FAIL": 0, "MISS": 0, "UNMAPPED": 0, "verdict": "OK"
+        "PASS": 1, "FAIL": 0, "MISS": 0, "UNMAPPED": 0, "WAIVED": 0, "verdict": "OK"
     }
     assert payload["records"] == [{
         "status": "PASS", "name": "throughput", "file": "paper.tex", "line": 4,
@@ -189,6 +212,29 @@ def test_json_carries_warnings(project, run):
     ]
 
 
+@pytest.mark.parametrize("command", ["check", "scan"])
+@pytest.mark.parametrize("problem", ["missing-ledger", "schema", "selector", "artifact"])
+def test_json_configuration_errors_keep_the_diagnostic_and_exit_two(project, run, command, problem):
+    claims = [throughput_claim()]
+    if problem == "schema":
+        claims = [throughput_claim(scal=100)]
+    if problem == "selector":
+        claims = [throughput_claim(value="summary:.missing")]
+    ledger = make(project, claims=claims)
+    if problem == "missing-ledger":
+        ledger = ledger.parent / "absent.yaml"
+    if problem == "artifact":
+        (ledger.parent / "results/summary.json").write_text("{broken", encoding="utf-8")
+    code, out, err = run(command, "--ledger", str(ledger), "--json")
+    assert code == 2
+    assert err.startswith("CONFIG ERROR: ")
+    message = err.removeprefix("CONFIG ERROR: ").strip()
+    assert json.loads(out) == {
+        "records": [], "warnings": [], "summary": {"verdict": "CONFIG_ERROR"},
+        "error": {"message": message},
+    }
+
+
 # --- scan: coverage gate is opt-in via --strict ----------------------------
 
 def test_scan_reports_unmapped_without_failing_the_run(project, run):
@@ -205,14 +251,14 @@ def test_scan_strict_turns_unmapped_into_a_failure(project, run):
     ledger = make(project, scan=SCAN)
     code, out, err = run("scan", "--ledger", str(ledger), "--strict")
     assert code == 1
-    assert "1 PASS, 0 FAIL, 0 MISS, 1 UNMAPPED — FAIL" in err
+    assert "1 PASS, 0 FAIL, 0 MISS, 1 UNMAPPED, 0 WAIVED — FAIL" in err
 
 
 def test_scan_strict_passes_when_every_number_is_claimed(project, run):
     ledger = make(project, claims=[throughput_claim(), latency_claim()], scan=SCAN)
     code, out, err = run("scan", "--ledger", str(ledger), "--strict")
     assert code == 0
-    assert "2 PASS, 0 FAIL, 0 MISS, 0 UNMAPPED — OK" in err
+    assert "2 PASS, 0 FAIL, 0 MISS, 0 UNMAPPED, 0 WAIVED — OK" in err
     assert "UNMAPPED" not in out
 
 
@@ -259,6 +305,32 @@ def test_generate_integer_format_rounds_rather_than_truncates(project, run, tmp_
     assert r"\newcommand{\Seeds}{42}" in (tmp_path / "numbers.tex").read_text(encoding="utf-8")
 
 
+def test_generate_formatless_macros_use_six_significant_figures(project, run, tmp_path):
+    # %g / six significant figures is the default, including its rounding
+    # and scientific notation. Changing it changes existing generated files.
+    emit = {"output": "numbers.tex", "macros": [
+        {"name": "Count", "value": "summary:.count"},
+        {"name": "Fraction", "value": "summary:.fraction"},
+    ]}
+    ledger = make(project, summary={"count": 1234567, "fraction": 0.123456789}, emit=emit)
+    code, out, err = run("generate", "--ledger", str(ledger))
+    assert code == 0
+    macros = [line for line in (tmp_path / "numbers.tex").read_text().splitlines()
+              if line.startswith(r"\newcommand")]
+    assert macros == [r"\newcommand{\Count}{1.23457e+06}",
+                      r"\newcommand{\Fraction}{0.123457}"]
+
+
+def test_generate_bad_format_is_a_configuration_error(project, run, tmp_path):
+    emit = {"output": "numbers.tex", "macros": [
+        {"name": "BadFormat", "value": "summary:.improvement_pct", "format": ".2q"}]}
+    ledger = make(project, emit=emit)
+    code, out, err = run("generate", "--ledger", str(ledger))
+    assert code == 2
+    assert "bad format spec '.2q' for macro 'BadFormat'" in err
+    assert not (tmp_path / "numbers.tex").exists()
+
+
 def test_generate_honours_out_override(project, run, tmp_path):
     ledger = make(project, emit=EMIT)
     target = tmp_path / "macros" / "generated.tex"
@@ -281,13 +353,45 @@ def test_relative_out_resolves_against_the_ledger_directory(project, run, tmp_pa
     assert not (workdir / "macros.tex").exists()
 
 
-def test_generate_check_passes_when_emitted_file_is_current(project, run):
+def test_generate_replaces_output_from_a_temporary_file_in_the_same_directory(
+    project, run, tmp_path, monkeypatch,
+):
+    from texclaims import cli
+    ledger = make(project, emit=EMIT)
+    output = tmp_path / "numbers.tex"
+    output.write_text("old macros\n", encoding="utf-8")
+    replace = cli.os.replace
+    replacements = []
+
+    def observe_replace(source, target):
+        source, target = Path(source), Path(target)
+        # Until the complete replacement is ready, the old macro file must
+        # remain intact. A temporary in another directory may cross filesystems.
+        assert target == output
+        assert source.parent == target.parent
+        assert source != target
+        assert target.read_text(encoding="utf-8") == "old macros\n"
+        assert r"\newcommand{\Improvement}{12.7}" in source.read_text(encoding="utf-8")
+        replacements.append(source)
+        replace(source, target)
+
+    monkeypatch.setattr(cli.os, "replace", observe_replace)
+    assert run("generate", "--ledger", str(ledger))[0] == 0
+    assert len(replacements) == 1
+    assert not replacements[0].exists()
+
+
+def test_generate_check_passes_when_emitted_file_is_current(project, run, tmp_path):
     ledger = make(project, emit=EMIT)
     assert run("generate", "--ledger", str(ledger))[0] == 0
+    before = {p: (p.read_bytes(), p.stat().st_mtime_ns)
+              for p in tmp_path.rglob("*") if p.is_file()}
     code, out, err = run("generate", "--ledger", str(ledger), "--check")
     assert code == 0
     assert out == ""
     assert "numbers.tex is in sync" in err
+    assert {p: (p.read_bytes(), p.stat().st_mtime_ns)
+            for p in tmp_path.rglob("*") if p.is_file()} == before
 
 
 def test_generate_check_prints_a_diff_for_a_hand_edited_file(project, run, tmp_path):
@@ -351,10 +455,26 @@ def test_init_writes_a_loadable_skeleton(run, tmp_path, monkeypatch):
     assert skeleton["version"] == 1
     assert skeleton["documents"] == ["main.tex"]
     assert skeleton["sources"] == {"summary": "results/summary.json"}
-    assert skeleton["claims"][0]["name"] == "example-claim"
-    assert skeleton["claims"][0]["anchor"] == {
-        "template": r"improves throughput by {num}\%"
-    }
+    assert skeleton["claims"] == []
+    assert "#   - name: example-claim" in (tmp_path / "claims.yaml").read_text(encoding="utf-8")
+
+
+def test_init_then_scan_reports_the_first_worklist(run, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "main.tex").write_text("We served 8123 requests.\n", encoding="utf-8")
+    (tmp_path / "out").mkdir()
+    (tmp_path / "out/metrics.json").write_text('{"requests": 8123}', encoding="utf-8")
+    assert run("init", "--doc", "main.tex")[0] == 0
+    path = tmp_path / "claims.yaml"
+    # The source remains a live placeholder: fix only the path the onboarding
+    # instructions name, without having to delete a claim from the demo paper.
+    path.write_text(path.read_text(encoding="utf-8").replace(
+        "results/summary.json", "out/metrics.json"), encoding="utf-8")
+    code, out, err = run("scan")
+    assert code == 0
+    assert out.startswith("UNMAPPED - main.tex:1 claimed=8123")
+    assert "0 PASS, 0 FAIL, 0 MISS, 1 UNMAPPED, 0 WAIVED — OK" in err
+    assert run("scan", "--strict")[0] == 2
 
 
 def test_init_refuses_to_overwrite_an_existing_ledger(run, tmp_path, monkeypatch):
@@ -372,14 +492,14 @@ def test_demo_check_is_clean_with_nine_passing_records(demo_ledger, run):
     code, out, err = run("check", "--ledger", str(demo_ledger))
     assert code == 0
     assert len([line for line in out.splitlines() if line.startswith("PASS")]) == 9
-    assert "== 9 PASS, 0 FAIL, 0 MISS, 0 UNMAPPED — OK ==" in err
+    assert "== 9 PASS, 0 FAIL, 0 MISS, 0 UNMAPPED, 1 WAIVED — OK ==" in err
 
 
 def test_demo_scan_strict_is_clean(demo_ledger, run):
     code, out, err = run("scan", "--ledger", str(demo_ledger), "--strict")
     assert code == 0
     assert "UNMAPPED" not in out
-    assert "== 9 PASS, 0 FAIL, 0 MISS, 0 UNMAPPED — OK ==" in err
+    assert "== 9 PASS, 0 FAIL, 0 MISS, 0 UNMAPPED, 1 WAIVED — OK ==" in err
 
 
 def test_demo_json_summary_matches_the_documented_shape(demo_ledger, run):
@@ -387,9 +507,10 @@ def test_demo_json_summary_matches_the_documented_shape(demo_ledger, run):
     assert code == 0
     payload = json.loads(out)
     assert payload["summary"] == {
-        "PASS": 9, "FAIL": 0, "MISS": 0, "UNMAPPED": 0, "verdict": "OK"
+        "PASS": 9, "FAIL": 0, "MISS": 0, "UNMAPPED": 0, "WAIVED": 1, "verdict": "OK"
     }
     assert payload["warnings"] == []
+    assert payload["waived"] == {"confidence-level": 1}
     assert {r["name"] for r in payload["records"]} == {
         "headline-improvement", "latency-row#g1", "latency-row#g2",
         "latency-row#g3", "latency-row#g4", "hit-rate", "seed-count",
@@ -415,4 +536,4 @@ def test_demo_check_catches_a_drifted_number(demo_ledger, tmp_path, run):
     code, out, err = run("check", "--ledger", str(copy / "claims.yaml"))
     assert code == 1
     assert "FAIL     hit-rate paper.tex:12 claimed=96.1 expected=94.218" in out
-    assert "== 8 PASS, 1 FAIL, 0 MISS, 0 UNMAPPED — FAIL ==" in err
+    assert "== 8 PASS, 1 FAIL, 0 MISS, 0 UNMAPPED, 1 WAIVED — FAIL ==" in err

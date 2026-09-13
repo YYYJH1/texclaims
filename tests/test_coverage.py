@@ -393,6 +393,24 @@ Throughput improved by 12.7\% overall.
     assert state.report.exit_code() == 0
 
 
+def test_multiple_regions_in_one_document_still_warn_about_unscanned_appendix(project):
+    path = project(
+        documents={"paper.tex": "First.\nGap was 7.7 units.\nSecond.\nNo results here.\n",
+                   "appendix.tex": "An unscanned result of 9.9 units.\n"},
+        artifacts=SUMMARY,
+        ledger={"sources": {"summary": "results/summary.json"},
+                "claims": [_claim("gap", "Gap was {num} units", ".gap")],
+                "scan": {"regions": [
+                    {"file": "paper.tex", "start": "First.", "end": "Second."},
+                    {"file": "paper.tex", "start": "Second."},
+                ]}},
+    )
+    state = _scan(path)
+    assert state.report.warnings == [
+        "appendix.tex has no scan region; nothing in it is checked for coverage"]
+    assert state.report.exit_code() == 0  # advisory outside the strict CLI gate
+
+
 def test_masked_citations_and_typesetting_dimensions_are_not_unmapped(project):
     tex = r"""\documentclass{article}
 \begin{document}

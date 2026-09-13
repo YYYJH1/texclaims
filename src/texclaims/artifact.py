@@ -18,6 +18,7 @@ value reference must be a scalar number.
 from __future__ import annotations
 
 import csv
+import io
 import json
 import math
 import re
@@ -77,7 +78,9 @@ def load_artifact(path: Path, ledger_path: str) -> Any:
     if path.suffix.lower() == ".csv":
         text = text.lstrip("\ufeff")  # Excel and pandas write a BOM
         out = []
-        reader = csv.DictReader(text.splitlines())
+        # splitlines() would turn a quoted "12\n34" cell into numeric 1234.
+        # Strict quoting also refuses a truncated final quoted field.
+        reader = csv.DictReader(io.StringIO(text), strict=True)
         try:
             header = reader.fieldnames
         except csv.Error as exc:
@@ -93,11 +96,15 @@ def load_artifact(path: Path, ledger_path: str) -> Any:
         except csv.Error as exc:
             raise LedgerError(f"malformed CSV: {exc}", ledger_path) from exc
         for lineno, row in enumerate(rows, start=2):
+            if None in row:  # DictReader stores surplus fields under its restkey
+                raise LedgerError(
+                    f"CSV row {lineno} has {len(row[None])} extra field(s) beyond "
+                    "the header", ledger_path)
             missing = sorted(k for k, v in row.items() if k is not None and v is None)
             if missing:  # a truncated artifact must not audit as if it were whole
                 raise LedgerError(
                     f"CSV row {lineno} is missing column(s) {missing}", ledger_path)
-            out.append({k: _coerce(v) for k, v in row.items() if k is not None})
+            out.append({k: _coerce(v) for k, v in row.items()})
         return out
     def _no_dupes(pairs):
         seen: dict = {}
@@ -178,6 +185,11 @@ def _type_name(node: Any) -> str:
 
 def _apply_func(node: Any, name: str) -> Any:
     if name == "abs":
+        # abs(True) is the integer 1; checking only after the function would
+        # let a flag pass as a result, including through an abs | mean stream.
+        values = node if isinstance(node, _Stream) else [node]
+        if any(isinstance(v, bool) for v in values):
+            raise LedgerError("function 'abs' received a boolean, not a number")
         try:
             if isinstance(node, _Stream):
                 return _Stream(abs(x) for x in node)

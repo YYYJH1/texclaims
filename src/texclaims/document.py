@@ -9,8 +9,8 @@ masked views exist, because anchoring and scanning want opposite things:
   including control words like ``\\pm`` that patterns rely on.
 * ``scan_masked`` additionally blanks control words and typesetting
   dimensions.  Coverage scans it, so ``\\pm0.99`` yields a token (the
-  control word no longer glues itself to the digits) while ``12pt``
-  does not.
+  control word no longer glues itself to the digits) while the length in
+  ``\\hspace{12pt}`` does not.
 """
 
 from __future__ import annotations
@@ -34,11 +34,11 @@ from .errors import LedgerError
 # A sign only counts when it is not itself preceded by a dash: "3--5" is a
 # range, and reading the second dash as a minus both invents -5 and hides 5.
 _SIGN = "(?<![-\u2212])[+\\-\u2212]"
-# Thousands come in two forms, the bare comma and LaTeX's 36{,}600.  The bare
-# form is refused right after another comma-joined digit run, because
+# Thousands come in three forms: bare comma, LaTeX's 36{,}600 and 50\,000.
+# Bare comma and \, forms are refused after another joined digit run, because
 # "(6,36,600)" is a tuple of three numbers and reading "36,600" out of it
 # fabricates a number the manuscript never printed.
-_THOUSANDS = r"(?<!\d,)(?<!\d, )\d{1,3}(?:,\d{3})+|\d{1,3}(?:\{,\}\d{3})+"
+_THOUSANDS = r"(?<!\d,)(?<!\d, )\d{1,3}(?:,\d{3})+|\d{1,3}(?:\{,\}\d{3})+|(?<!\d\\,)\d{1,3}(?:\\,\d{3})+"
 _MAGNITUDE = rf"(?:{_THOUSANDS}|\d+)(?:\.\d+)?|\.\d+"
 NUMBER_TOKEN = rf"(?:{_SIGN})?(?:{_MAGNITUDE})(?:[eE][+\-]?\d+)?"
 NUMBER_GROUP = rf"({NUMBER_TOKEN})"
@@ -54,10 +54,15 @@ class ParsedNumber:
     token: str
 
 
+def normalize_number(token: str) -> str:
+    """Remove display-only syntax before either float or exact integer parsing."""
+    s = _PCT_TAIL_RE.sub("", token.strip())
+    return s.replace("\u2212", "-").replace("{,}", "").replace("\\,", "").replace(",", "")
+
+
 def parse_number(token: str) -> ParsedNumber:
     """Parse a captured token into a value plus its display precision."""
-    s = _PCT_TAIL_RE.sub("", token.strip())
-    s = s.replace("\u2212", "-").replace("{,}", "").replace(",", "")
+    s = normalize_number(token)
     try:
         value = float(s)
     except ValueError as exc:  # regex should prevent this; belt and braces
@@ -85,12 +90,20 @@ _STRUCT_RE = re.compile(
 )
 _HREF_RE = re.compile(r"\\href\{[^{}\n]*\}")  # mask the URL argument only
 _CONTROL_WORD_RE = re.compile(r"\\[a-zA-Z]+")  # \pm, \approx, \times, \section
-# A dimension is a typesetting instruction only where LaTeX takes one: right
-# after "{", "[" or "=".  Standing in prose, "9.9mm" is a measurement and the
-# scan must still see it.
+# A brace alone does not identify a dimension: \textbf{9.9mm} is a reported
+# measurement. Only recognised length-taking commands may hide such values;
+# an unfamiliar command leaves its numbers for the author to account for.
 _DIM_RE = re.compile(r"(?<![A-Za-z])(?:width|height|scale|depth)=-?[\d.]+")
+_LENGTH = r"[+\-]?(?:\d+(?:\.\d*)?|\.\d+)\s*(?:pt|em|ex|cm|mm|in|bp)\b"
+_GLUE = rf"{_LENGTH}(?:\s+(?:plus|minus)\s+{_LENGTH})*"
+_BRACED_LENGTH = rf"\{{\s*{_LENGTH}\s*\}}"
 _UNIT_RE = re.compile(
-    r"(?:[{\[=]|\bplus\b|\bminus\b)\s*-?[\d.]+\s*(?:pt|em|ex|cm|mm|in|bp)\b")
+    rf"\\(?:hspace|vspace)\*?\s*\{{\s*{_GLUE}\s*\}}"
+    rf"|\\(?:setlength|addtolength)\s*\{{\s*\\[A-Za-z]+\s*\}}"
+    rf"\s*\{{\s*{_GLUE}\s*\}}"
+    rf"|\\rule(?:\s*\[\s*{_LENGTH}\s*\])?\s*{_BRACED_LENGTH}\s*{_BRACED_LENGTH}"
+    rf"|\\fontsize\s*{_BRACED_LENGTH}\s*{_BRACED_LENGTH}"
+    rf"|\\(?:hskip|vskip|kern)(?![A-Za-z])\s*{_GLUE}")
 # A fraction of a length command is unambiguously typesetting: no measurement
 # in prose is written as "0.45\textwidth".  Recognised before control words
 # are blanked, or only the bare fraction would be left behind.
@@ -115,8 +128,13 @@ _URLLIKE_RE = re.compile(r"(?<!\\)\\(?:url|path)\s*\{[^{}\n]*\}")
 _HREF_URL_RE = re.compile(r"(?<!\\)\\href(?:\[[^\]\n]*\])?\{[^{}\n]*\}")
 _VERBATIM_ENV_RE = re.compile(
     r"\\begin\{(verbatim\*?|lstlisting|minted|Verbatim|comment)\}.*?\\end\{\1\}", re.S)
-# \iffalse ... \fi is how a draft comments out a whole block.
-_IFFALSE_RE = re.compile(r"\\iffalse\b.*?\\fi\b", re.S)
+_TEX_COMMAND_RE = re.compile(r"\\(?:[a-zA-Z]+|.)")
+_IF_COMMANDS = {
+    "\\if", "\\ifcat", "\\ifnum", "\\ifdim", "\\ifodd", "\\ifvmode",
+    "\\ifhmode", "\\ifmmode", "\\ifinner", "\\ifvoid", "\\ifhbox", "\\ifvbox",
+    "\\ifx", "\\ifeof", "\\iftrue", "\\iffalse", "\\ifcase", "\\ifdefined",
+    "\\ifcsname", "\\iffontchar",
+}
 
 
 def _blank_keep_newlines(match: re.Match[str]) -> str:
@@ -124,12 +142,45 @@ def _blank_keep_newlines(match: re.Match[str]) -> str:
     return "".join(c if c == "\n" else " " for c in match.group(0))
 
 
+def _mask_false_branches(text: str) -> str:
+    # A regex ending at \fi also erases the live \else branch. Track nested
+    # conditionals so an inner \else or \fi cannot end the outer false branch.
+    # Only \iffalse is evaluated; both arms of other conditions stay visible.
+    branches: list[bool | None] = []
+    chars = list(text)
+    hidden_start = 0
+    for m in _TEX_COMMAND_RE.finditer(text):
+        command = m.group(0)
+        was_hidden = False in branches
+        if command == "\\iffalse":
+            branches.append(False)
+        elif branches and command.startswith("\\if"):
+            if command not in _IF_COMMANDS:
+                # A custom conditional's nesting is unknown; guessing could
+                # hide the live prose after the outer \else.
+                raise LedgerError(f"cannot safely mask {command!r} inside \\iffalse")
+            branches.append(None)
+        elif branches and command == "\\else":
+            if branches[-1] is False:
+                branches[-1] = True
+        elif branches and command == "\\fi":
+            branches.pop()
+        hidden = False in branches
+        if hidden and not was_hidden:
+            hidden_start = m.start()
+        elif was_hidden and not hidden:
+            chars[hidden_start:m.end()] = [
+                c if c == "\n" else " " for c in text[hidden_start:m.end()]]
+    if branches:
+        raise LedgerError("unterminated \\iffalse conditional")
+    return "".join(chars)
+
+
 def mask_comments(text: str) -> str:
     # Blank every construction where a percent is literal before looking for
     # comments; otherwise one % inside a URL or a listing silently eats the
     # remainder of its line, taking real results with it.
     text = _VERBATIM_ENV_RE.sub(_blank_keep_newlines, text)
-    text = _IFFALSE_RE.sub(_blank_keep_newlines, text)
     text = _VERB_RE.sub(_blank, text)
     text = _LSTINLINE_RE.sub(_blank, text)
     text = _URLLIKE_RE.sub(_blank, text)
@@ -148,7 +199,8 @@ def mask_comments(text: str) -> str:
                 break
             i = j + 1
         lines.append(line)
-    return "\n".join(lines)
+    # Comments and verbatim text must not supply conditional delimiters.
+    return _mask_false_branches("\n".join(lines))
 
 
 class Document:
@@ -175,7 +227,7 @@ class Document:
             # glued to one (\pm0.99) is not hidden behind it.
             scan_masked = _RELATIVE_LEN_RE.sub(_blank, masked)
             scan_masked = _DIM_RE.sub(_blank, scan_masked)
-            scan_masked = _UNIT_RE.sub(_blank, scan_masked)
+            scan_masked = _UNIT_RE.sub(_blank_keep_newlines, scan_masked)
             scan_masked = _CONTROL_WORD_RE.sub(_blank, scan_masked)
         else:
             scan_masked = masked

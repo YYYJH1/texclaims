@@ -9,8 +9,11 @@ Please do not open a public issue for one. Expect a first reply within a week.
 ## What `texclaims` does with input
 
 It reads three kinds of file, all of them yours: a YAML ledger, the manuscript
-files the ledger lists, and the experiment artifacts it points at (JSON, YAML,
-CSV). It writes one file, and only when you run `generate`.
+files the ledger lists, and the experiment artifacts it points at (JSON or
+CSV). `init` creates a `claims.yaml` skeleton in the current directory and
+refuses to overwrite an existing one. `generate` writes the macro file through
+a temporary file in the same directory, then renames it into place;
+`generate --check` writes nothing.
 
 Two properties are load-bearing:
 

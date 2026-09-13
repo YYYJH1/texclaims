@@ -7,7 +7,7 @@ does it now refuse to let through, and what test says so".
 
 ```console
 $ pip install -e ".[dev]"
-$ pytest                 # the whole suite, about two seconds
+$ pytest                 # the whole suite
 ```
 
 Python 3.10+ and PyYAML. Nothing else is needed to develop it, and nothing
@@ -23,8 +23,11 @@ as the failure it prevents rather than as the feature it adds.
 Three things are enforced by tests and will fail CI if you edit them by hand:
 
 - **Console output quoted in either README.** [`tests/test_readme.py`](tests/test_readme.py)
-  re-runs the demo and compares. Change the tool, then paste what it actually
-  prints — a tool arguing against hand-copied numbers may not hand-copy its own.
+  re-runs the clean demo and the documented edits, comparing all quoted record
+  statuses and summaries in both languages. The JSON summary is parsed with
+  Python's `json` module; the tests do not require `jq`. Change the tool, then
+  paste what it actually prints — a tool arguing against hand-copied numbers
+  may not hand-copy its own.
 - **The test count in the README.** Same file, same reason.
 - **The version.** It is stated once, in [`src/texclaims/__init__.py`](src/texclaims/__init__.py).
   `pyproject.toml` derives it and `CITATION.cff` must agree; a test checks that.

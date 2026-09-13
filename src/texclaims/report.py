@@ -9,6 +9,8 @@ Line protocol (stable, grep-friendly):
     WARN     <message>
 
 Ledger lines go to stdout; the summary/verdict line goes to stderr.
+The summary includes a WAIVED counter for exempted number occurrences;
+JSON also reports counts by exemption name. Waivers add no record lines.
 Exit codes: 0 clean, 1 reconciliation failure, 2 configuration error.
 """
 
@@ -19,9 +21,19 @@ import math
 import sys
 from dataclasses import dataclass, field
 
-def _jsonable(value: float | None) -> float | str | None:
+
+def _in_float_range(value: int | float) -> bool:
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def _jsonable(value: int | float | None) -> int | float | str | None:
     """Non-finite numbers become text; bare NaN is not valid JSON."""
-    if value is None or math.isfinite(value):
+    # JSON can represent an integer that float cannot. Keep the exact value
+    # rather than crashing while rendering an already-failed audit.
+    if value is None or isinstance(value, int) or _in_float_range(value):
         return value
     return str(value)
 
@@ -30,6 +42,7 @@ PASS = "PASS"
 FAIL = "FAIL"
 MISS = "MISS"
 UNMAPPED = "UNMAPPED"
+WAIVED = "WAIVED"
 
 _FAILING = (FAIL, MISS, UNMAPPED)
 
@@ -41,7 +54,7 @@ class Record:
     file: str
     line: int | None = None
     claimed: str | None = None
-    expected: float | None = None
+    expected: int | float | None = None
     tolerance: float | None = None
     note: str = ""
 
@@ -51,7 +64,9 @@ class Record:
         if self.claimed is not None:
             parts.append(f"claimed={self.claimed}")
         if self.expected is not None:
-            parts.append(f"expected={self.expected:.10g}")
+            expected = (f"{self.expected:.10g}" if _in_float_range(self.expected)
+                        else str(self.expected))
+            parts.append(f"expected={expected}")
         if self.tolerance is not None:
             parts.append(f"tol={self.tolerance:.3g}")
         line = " ".join(parts)
@@ -67,6 +82,7 @@ class Report:
     # A non-strict scan reports uncovered numbers without failing the run, so
     # the rendered verdict has to agree with the exit code.
     unmapped_is_failure: bool = True
+    waived: dict[str, int] = field(default_factory=dict)
 
     def add(self, record: Record) -> None:
         self.records.append(record)
@@ -74,8 +90,14 @@ class Report:
     def warn(self, message: str) -> None:
         self.warnings.append(message)
 
+    def waive(self, name: str) -> None:
+        # A greedy exemption can cover an entire sentence. Count its tokens
+        # without emitting a line per token or changing reconciliation status.
+        self.waived[name] = self.waived.get(name, 0) + 1
+
     def counts(self) -> dict[str, int]:
-        counts = {PASS: 0, FAIL: 0, MISS: 0, UNMAPPED: 0}
+        counts = {PASS: 0, FAIL: 0, MISS: 0, UNMAPPED: 0,
+                  WAIVED: sum(self.waived.values())}
         for record in self.records:
             counts[record.status] = counts.get(record.status, 0) + 1
         return counts
@@ -98,7 +120,7 @@ class Report:
         verdict = "FAIL" if self.failed else "OK"
         print(
             f"== {c[PASS]} PASS, {c[FAIL]} FAIL, {c[MISS]} MISS, "
-            f"{c[UNMAPPED]} UNMAPPED — {verdict} ==",
+            f"{c[UNMAPPED]} UNMAPPED, {c[WAIVED]} WAIVED — {verdict} ==",
             file=sys.stderr,
         )
 
@@ -118,6 +140,7 @@ class Report:
                 for r in self.records
             ],
             "warnings": list(self.warnings),
+            "waived": dict(self.waived),
             "summary": {**self.counts(), "verdict": "FAIL" if self.failed else "OK"},
         }
         # allow_nan would emit bare NaN/Infinity, which no strict JSON parser
