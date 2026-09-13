@@ -13,5 +13,5 @@ updates:
       actions:
         patterns: ["*"]
 
-# No pip entry: the one runtime dependency is declared as a range (PyYAML>=6.0)
+# No pip entry: the one runtime dependency is declared as a PyYAML version range
 # and the test matrix already installs the newest resolvable set every week.
