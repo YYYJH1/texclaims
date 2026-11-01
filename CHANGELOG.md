@@ -19,6 +19,8 @@ longer breaks a paragraph, so `near` anchors stop failing on correct ledgers.
   new Python release breaking it.
 - `CONTRIBUTING.md`, `SECURITY.md`, this changelog, a pull request template, a
   feature request template, and Dependabot for the CI actions.
+- A CI job on Python 3.15 that cannot fail the run. 3.15 is not claimed yet:
+  PyYAML 6.0.3, the floor and still the newest release, ships no wheel for it.
 
 ### Changed
 
